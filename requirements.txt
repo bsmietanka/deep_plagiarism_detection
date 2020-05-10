@@ -1,0 +1,15 @@
+matplotlib
+numpy
+pandas
+scikit-learn
+scipy
+seaborn
+sklearn
+torch
+rpy2
+tqdm
+tensorboard
+
+# OPTIONAL
+ipython
+jupyter
