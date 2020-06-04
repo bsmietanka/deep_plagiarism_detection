@@ -1,5 +1,7 @@
 r_tokens = [
     r"PADDING",
+    r"<SOS>",
+    r"<EOS>",
     r"@",
     r"~",
     r"-",

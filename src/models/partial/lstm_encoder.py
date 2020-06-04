@@ -1,8 +1,7 @@
 from torch import nn
-import torch.nn.functional as F
 import torch
 
-class BaseModel(nn.Module):
+class LSTMEncoder(nn.Module):
 
     def __init__(self, vocab_size, embedding_dim, hidden_dim, num_layers: int = 1):
         super().__init__()

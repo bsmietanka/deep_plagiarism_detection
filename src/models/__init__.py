@@ -1,2 +1,3 @@
-from models.siamese_model import SiameseModel
- 
+from models.deep_siamese_classificator import DeepSiameseClassificator
+from models.siamese_encoder import SiameseLSTMEncoder
+from models.euclidean_siamese_classificator import EuclideanSiameseClassificator

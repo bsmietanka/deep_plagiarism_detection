@@ -14,34 +14,45 @@ from rpy2 import rinterface
 
 RRuntimeError = rinterface.embedded.RRuntimeError
 
-from utils.r_tokenizer import tokenize, tokens2idxs, normalize_idxs
+from utils.r_tokenizer import parse, tokenize, tokens2idxs, chars2idxs, num_tokens, num_chars
 
 __location__ = path.realpath(
     path.join(getcwd(), path.dirname(__file__)))
 
-
+# TODO: create triplet loss dataset
 class Dataset(data.Dataset):
 
-    def __init__(self, root_dir: str, class_ratio: float = .0, num_jobs: int = 1):
+    def __init__(self, root_dir: str, class_ratio: float = .0, num_jobs: int = 1, tokens=True):
         self.root_path: str = root_dir
         self.class_ratio = class_ratio
+        self.tokens = tokens
+        self.vocab_size = num_tokens if self.tokens else num_chars
         csv_path = path.join(self.root_path, "full.csv")
 
         if path.exists(csv_path):
             self.dataset: pd.DataFrame = pd.read_csv(csv_path, index_col=0)
             return
 
+        with open(path.join(__location__, 'errors.txt'), 'r') as f:
+            self.skip_files = set([line.strip() for line in f])
+
         dirs = []
         for dirpath, _, files in os.walk(self.root_path):
             if len(files) > 0:
                 dirs.append(dirpath)
 
+        self.dataset = None
         with Pool(num_jobs) as p:
-            datasets = list(tqdm(p.imap_unordered(self._prepare_dataset, dirs), total=len(dirs)))
+            for dataset in tqdm(p.imap_unordered(self._prepare_dataset, dirs), total=len(dirs),
+                                                 desc="Processing directories"):
+                if self.dataset is None:
+                    self.dataset = dataset
+                else:
+                    self.dataset = self.dataset.append(df, ignore_index=True)
 
-        self.dataset: pd.DataFrame = datasets[0]
-        for df in tqdm(datasets[1:]):
-            self.dataset = self.dataset.append(df, ignore_index=True)
+        # self.dataset: pd.DataFrame = datasets[0]
+        # for df in tqdm(datasets[1:]):
+        #     self.dataset = self.dataset.append(df, ignore_index=True)
 
         self.dataset.sample(frac=1).reset_index(drop=True, inplace=True)
         self.dataset.to_csv(csv_path)
@@ -72,9 +83,6 @@ class Dataset(data.Dataset):
         if path.exists(path.join(dataset_dir, 'full.csv')):
             dataset = pd.read_csv(path.join(dataset_dir, 'full.csv'), index_col=0)
         else:
-            with open(path.join(__location__, 'errors.txt'), 'r') as f:
-                skip_files = set([line.strip() for line in f])
-
             csv_name = "!benchmark.csv"
             csv_path = path.join(dataset_dir, csv_name)
             df: pd.DataFrame = pd.read_csv(csv_path, sep=";", index_col=0)
@@ -87,7 +95,7 @@ class Dataset(data.Dataset):
 
             files = [path.join(dataset_dir, fname)
                     for fname in listdir(dataset_dir) if fname.endswith(".R")]
-            files = [*filter(lambda p: path.abspath(p) not in skip_files, files)]
+            files = [*filter(lambda p: path.abspath(p) not in self.skip_files, files)]
 
             for fun1, fun2 in permutations(files, 2):
                 dataset_dict['fun1'].append(fun1)
@@ -109,7 +117,6 @@ class Dataset(data.Dataset):
 
         return dataset
 
-
     def __len__(self) -> int:
         return len(self.dataset)
 
@@ -117,12 +124,18 @@ class Dataset(data.Dataset):
         row = self.dataset.iloc[index, ]
         target: float = row['plagiarism']
         similarity: Optional[float] = row['similarity']
-        fun1: List[str] = tokenize(open(row['fun1'], 'r').read())
-        fun1: Tensor = torch.LongTensor(normalize_idxs(tokens2idxs(fun1)))
-        fun2: List[str] = tokenize(open(row['fun2'], 'r').read())
-        fun2: Tensor = torch.LongTensor(normalize_idxs(tokens2idxs(fun2)))
+        fun1: Tensor = self._tokenize(open(row['fun1'], 'r').read())
+        fun2: Tensor = self._tokenize(open(row['fun2'], 'r').read())
         return fun1, fun2, target, similarity
 
+    def _tokenize(self, code: str) -> torch.LongTensor:
+        if self.tokens:
+            fun: List[str] = tokenize(code)
+            fun = torch.LongTensor(tokens2idxs(fun))
+        else:
+            fun: str = parse(code)
+            fun = torch.LongTensor(chars2idxs(fun))
+        return fun
 
 if __name__ == "__main__":
     d = Dataset("data", class_ratio=0.5, num_jobs=8)

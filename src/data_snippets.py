@@ -5,7 +5,7 @@ import traceback
 
 from tqdm import tqdm
 
-from src.utils.r_tokenizer import tokenize
+from utils.r_tokenizer import tokenize
 
 lengths = []
 count = 0

@@ -17,7 +17,6 @@ from sklearn.model_selection import train_test_split
 
 from datasets import Dataset
 from models import SiameseModel
-from utils.r_tokenizer import tokenize, vocab_size
 from metrics import Accuracy, ConfusionMatrix
 
 start_time = datetime.now()
@@ -27,25 +26,9 @@ leaderboards = join(runs_dir, 'leaderboards.csv')
 save_path = join(runs_dir, str(start_time))
 writer = SummaryWriter(save_path)
 
-# TODO: combine multiple datasets and use class balancing
-
-# losses = {
-#     'ce': lambda **kwargs: MultiClassLossWrapper(nn.CrossEntropyLoss, **kwargs),
-#     'bce' : nn.BCELoss,
-#     'focal': FocalLoss
-# }
-
-# metrics = {
-#     'accuracy': Accuracy,
-#     'confusion_matrix': ConfusionMatrix
-# }
-
 def write2file(path: str, text: str):
     with open(join(save_path, path), 'w') as f:
         f.write(text.strip() + "\n")
-
-# TODO: learning rate scheduler?
-# TODO: optimizer in config
 
 def load_model(model_path: str) -> nn.Module:
     if model_path == "best":
@@ -72,17 +55,15 @@ def train(**params):
 
     data_params = params["dataset_params"]
 
-    # TODO: split the dataset somehow
-    # TODO: combine multiple datasets
     dataset = Dataset(**data_params)
 
     indexes = list(range(len(dataset)))
-    print(len(indexes))
+    print("Number of examples in dataset", len(indexes))
     train_ind, val_ind = train_test_split(indexes, test_size=0.2)
 
     train_sampler = SubsetRandomSampler(train_ind)
     val_sampler = SubsetRandomSampler(val_ind)
-    test_sampler = None # TODO when trainning starts working
+    test_sampler = None
 
     def pack_sequences(sequences):
         seq_lengths = [len(seq) for seq in sequences]
@@ -108,7 +89,7 @@ def train(**params):
     val_log_interval = len(valloader)
 
     # TODO: Model params in config
-    model = SiameseModel(vocab_size, 32, 128, 1, 1)
+    model = SiameseModel(dataset.vocab_size, 4, 128, 1, 1)
     if 'load_model' in params:
         model.load_state_dict(load_model(params['load_model']))
 
@@ -159,7 +140,6 @@ def train(**params):
             with torch.no_grad():
                 for i, batch in enumerate(tqdm(valloader), 1):
 
-                     # TODO: batch handling
                     fun1_sequences = batch[0].to(device)
                     fun2_sequences = batch[1].to(device)
                     labels = batch[2].to(device)
@@ -168,7 +148,6 @@ def train(**params):
                     res = model.forward(fun1_sequences, fun2_sequences)
                     loss = criterion(res, labels)
 
-                    # TODO: replace with metric, like accuracy, f1 score etc.
                     metric(res, labels)
                     metric2(res, labels)
 
@@ -184,7 +163,7 @@ def train(**params):
             print('Validation metric:', metric)
             writer.add_scalar(f'validation {metric.name}', metric.get(), epoch)
 
-            if metric.get() > best_acc: # TODO: replace with metric comparison? How would it work with confusion matrix, not very good solution
+            if metric.get() > best_acc:
                 no_improvement = 0
                 torch.save(model.state_dict(), join(save_path, 'model.pth'))
                 write2file('best_epoch.txt', f'Best epoch: {epoch}')
@@ -226,8 +205,6 @@ if __name__ == '__main__':
     parser.add_argument('--config_path', '-c', type=str, default='config.json',
         help='Path to config file with parameters, look at config.json')
     args = parser.parse_args()
-
-    # with open('config.json', 'r') as f:
 
     with open(args.config_path, 'r') as f:
         params = json.load(f)
