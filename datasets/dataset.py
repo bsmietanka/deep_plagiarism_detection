@@ -10,11 +10,8 @@ from torch.utils import data
 from torch import Tensor
 import torch
 from tqdm import tqdm
-from rpy2 import rinterface
 
-RRuntimeError = rinterface.embedded.RRuntimeError
-
-from utils.r_tokenizer import parse, tokenize, tokens2idxs, chars2idxs, num_tokens, num_chars
+from datasets.utils.r_tokenizer import parse, tokenize, tokens2idxs, chars2idxs, num_tokens, num_chars
 
 __location__ = path.realpath(
     path.join(getcwd(), path.dirname(__file__)))
@@ -40,6 +37,10 @@ class Dataset(data.Dataset):
         for dirpath, _, files in os.walk(self.root_path):
             if len(files) > 0:
                 dirs.append(dirpath)
+
+        print(self.root_path)
+        if len(dirs) == 0:
+            raise ValueError("Provided dataset root path doesn't include any directories")
 
         self.dataset = None
         with Pool(num_jobs) as p:
@@ -108,7 +109,7 @@ class Dataset(data.Dataset):
                 elif len(filter_res) == 0:
                     dataset_dict['plagiarism'].append(0)
                     dataset_dict['similarity'].append(None)
-                else: # TODO: theoretically there should be at most 1 row in filter_res
+                else: # NOTE: theoretically there should be at most 1 row in filter_res
                     # print(filter_res)
                     raise RuntimeError("Dataset .csv file ill-defined")
 

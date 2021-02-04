@@ -1,11 +1,38 @@
 {
-  "dataset_params": {
-    "root_dir": "/home/smietankab/private/thesis/data/alpha=1.0/n=500/p=0.1/r=0.1",
-    "class_ratio": 0.5,
-    "tokens": false
-  },
-  "batch": 10,
+  "batch_size": 100,
   "epochs": 100,
-  "early_stopping": 50,
-  "optimizer_params": {}
+  "task": "graph",
+  "dataset": {
+    "root_dir": "/home/smetana/private/thesis/data/graph_functions/",
+    "format": "graph",
+    "cache": false
+  },
+  "train_dataset": {
+    "mode": "pairs",
+    "split_file": "train.txt"
+  },
+  "val_dataset": {
+    "mode": "singles",
+    "split_subset": 20,
+    "split_file": "val.txt"
+  },
+  "encoder_type": "gnn",
+  "encoder": {
+    "hidden_dims": [8, 24, 64, 128],
+    "num_node_embeddings": 4,
+    "layer_type": "gcn",
+    "post_mp_dim": null
+  },
+  "optimizer": {
+    "lr": 1e-4,
+    "weight_decay": 0
+  },
+  "training": {
+    "update_interval": 0.1
+  },
+  "val": {
+    
+  },
+  "visualization": {
+  }
 }

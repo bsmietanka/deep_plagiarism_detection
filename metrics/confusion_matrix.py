@@ -1,6 +1,5 @@
 import torch
 from sklearn.metrics import confusion_matrix
-import numpy as np
 
 class ConfusionMatrix:
 
@@ -26,7 +25,6 @@ class ConfusionMatrix:
     def get(self):
         return self._get_confusion_matrix()
 
-    # TODO: pretty print
     def __str__(self):
         return "\n" + str(self._get_confusion_matrix())
 

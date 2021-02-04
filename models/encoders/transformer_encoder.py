@@ -1,5 +1,7 @@
+from typing import Tuple
 from torch import nn
 import torch
+import math
 
 # NOTE: transformer encoder layer works only for batch second input
 class TransformerEncoder(nn.Module):
@@ -17,7 +19,7 @@ class TransformerEncoder(nn.Module):
         self.transformer_encoder = nn.TransformerEncoder(enc_layer, num_layers=num_layers)
 
     # NOTE: taken from https://github.com/wzlxjtu/PositionalEncoding2D
-    def positional_encoding1d(length):
+    def positional_encoding1d(self, length):
         """
         :param length: length of positions
         :return: length*d_model position matrix
@@ -31,12 +33,12 @@ class TransformerEncoder(nn.Module):
 
         return pe
 
-    def forward(self, sentences):
-        sentences, sent_lens = nn.utils.rnn.pad_packed_sequence(sentences, batch_first=True)
-        sentences: torch.Tensor = sentences.squeeze(2)
-        embeds = self.word_embeddings(sentences)
-        for i in range(embeds.shape[0]):
-            embeds[:sent_lens[i]] += self.positional_encoding1d(sent_lens[i])
-        embeds = torch.transpose(embeds, 0, 1)
-        transformer_out = self.transformer_encoder(transformer_in)
-        return transformer_out.transpose(0, 1), sent_lens
+    def forward(self, sequences) -> Tuple[torch.Tensor, torch.Tensor]:
+        sequences, sent_lens = nn.utils.rnn.pad_packed_sequence(sequences, batch_first=True)
+        sequences = sequences.squeeze(2)
+        sequences = self.word_embeddings(sequences)
+        for i in range(sequences.shape[0]):
+            sequences[:sent_lens[i]] += self.positional_encoding1d(sent_lens[i])
+        sequences = torch.transpose(sequences, 0, 1)
+        sequences = self.transformer_encoder(sequences)
+        return sequences.transpose(0, 1), sent_lens

@@ -1,5 +1,4 @@
-import torch
-from torch import nn
+from torch import nn, Tensor
 
 class DenseEncoder(nn.Module):
 
@@ -10,7 +9,7 @@ class DenseEncoder(nn.Module):
         self.dense = nn.Linear(in_size, out_size)
         self.relu = nn.ReLU()
 
-    def forward(self, embs):
+    def forward(self, embs: Tensor) -> Tensor:
         x = self.batchnorm(embs)
         x = self.dense(x)
         return self.relu(x)

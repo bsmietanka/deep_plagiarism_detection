@@ -1,5 +1,5 @@
 characters = [
-    "UNKNOWN"
+    "UNKNOWN",
     "\n",
     " ",
     "\xa0",
@@ -150,5 +150,5 @@ characters = [
     "日",
     "月",
     "﹪",
-    "％"
+    "％",
 ]

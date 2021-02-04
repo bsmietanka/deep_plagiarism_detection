@@ -1,12 +1,9 @@
-import os
 from typing import List
-import warnings
 
 import rpy2.robjects as ro
-from rpy2.rinterface import RRuntimeWarning
 
-from utils.r_tokens import r_tokens
-from utils.vocab import characters
+from datasets.utils.r_tokens import r_tokens
+from datasets.utils.vocab import characters
 
 
 token2idx = {token:i for i, token in enumerate(r_tokens)}
@@ -42,7 +39,7 @@ def tokenize(code: str) -> List[str]:
     return tokens
 
 def parse(code: str) -> str:
-    code = escape(code)
+    code = escape_chars(code)
     command = f"as.character(parse(text='{code}', keep.source=FALSE, encoding='UTF-8'))"
     r_output = ro.r(command)[0]
     return r_output

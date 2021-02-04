@@ -1,7 +1,9 @@
 # TODO
 
-* read about graph representation of source code
-* read about neural networks operating on graphs (specifically classification task or encoding graph to fixed size)
-* implement graph-based siamese neural network
-* learning rate scheduler?
-* try mlconfig
+* cache directory for FunctionDataset
+* create multiple val and test splits?
+* move packing sequence from NLPCollater to FunctionDataset
+
+* implement some kind of baseline (https://networkx.org/documentation/stable/reference/algorithms/similarity.html)
+*
+
