@@ -44,7 +44,7 @@ class TransformerEncoder(nn.Module):
         sequences = sequences.squeeze(2)
         sequences = self.word_embeddings(sequences)
         for i in range(sequences.shape[0]):
-            sequences[:sent_lens[i]] += self.positional_encoding1d(sent_lens[i])
+            sequences[i, :sent_lens[i]] += self.positional_encoding1d(sent_lens[i]).to(sequences.device)
         sequences = sequences.transpose(0, 1)
         sequences = self.transformer_encoder(sequences)
 
