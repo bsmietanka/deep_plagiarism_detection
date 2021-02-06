@@ -1,5 +1,6 @@
 # generated on R version 4.0.3, this can change in next versions
 r_tokens = [
+    "<PAD>",
     "!",
     "$",
     "(",

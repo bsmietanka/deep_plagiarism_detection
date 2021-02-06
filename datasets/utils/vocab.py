@@ -1,4 +1,5 @@
 characters = [
+    "<PAD>",
     "UNKNOWN",
     "\n",
     " ",

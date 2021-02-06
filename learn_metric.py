@@ -2,13 +2,15 @@ import argparse
 import json
 from datetime import datetime
 from os import makedirs, path
-from typing import Optional, Union
+from typing import List, Optional, Union
+from pprint import pprint
 
 import numpy as np
 import torch
 import umap
 import umap.plot
 from torch import nn
+from torch import Tensor
 from pytorch_metric_learning import distances, losses, miners
 from pytorch_metric_learning.utils.accuracy_calculator import \
     AccuracyCalculator
@@ -16,10 +18,12 @@ from torch import optim
 from torch.utils.data.dataloader import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
+from numba import njit
 
-from datasets.utils.collate import GraphCollater, NLPCollater
+from datasets.utils.collate import Collater
 from datasets.functions_dataset import FunctionsDataset
-from models.encoders import GraphEncoder, LSTMEncoder, TransformerEncoder
+from encoders import GraphEncoder, LSTMEncoder, TransformerEncoder
+from utils.measure_performance import measure
 
 
 runs_dir = "runs"
@@ -27,11 +31,13 @@ start_time = datetime.now()
 formatted_start_time = start_time.strftime("%y-%m-%d %H:%M:%S")
 current_run_out_dir = path.join(runs_dir, formatted_start_time)
 log_dir = path.join(current_run_out_dir, "logs")
-models_dir = path.join(current_run_out_dir, "models")
-makedirs(models_dir, exist_ok=True)
 makedirs(log_dir, exist_ok=True)
 tb_writer = SummaryWriter(log_dir)
+models_dir = path.join(current_run_out_dir, "models")
+makedirs(models_dir, exist_ok=True)
 
+
+@measure.fun
 def train_augs(model: nn.Module,
                loss_fun: losses.BaseMetricLossFunction,
                miner: miners.BaseMiner,
@@ -45,37 +51,71 @@ def train_augs(model: nn.Module,
     running_loss = 0.
     mined_triplets = 0
 
+    accumulation_steps = 1
+    if train_loader.batch_size < 40:
+        accumulation_steps = np.ceil(40 / train_loader.batch_size)
+
     if isinstance(update_interval, float):
         update_interval = round(update_interval * len(train_loader))
+
+    n_accumulations = update_interval // accumulation_steps
+    if n_accumulations < 1:
+        n_accumulations = 1
+    update_interval = n_accumulations * accumulation_steps
+
+    accumulated_embeddings: List[Tensor] = []
+    accumulated_labels: List[Tensor] = []
+    optimizer.zero_grad()
     pbar = tqdm(train_loader, desc="Training")
     for batch_idx, (samples, aug_samples, labels) in enumerate(pbar, 1):
-        optimizer.zero_grad()
 
-        samples, labels = samples.to(device), labels.to(device)
-        embeddings = model(samples)
-        del samples
+        with measure.block("sample1_encoding"):
+            samples = samples.to(device)
+            embeddings = model(samples).cpu()
+            del samples
 
-        aug_samples = aug_samples.to(device)
-        aug_embeddings = model(aug_samples)
-        del aug_samples
+        with measure.block("sample2_encoding"):
+            aug_samples = aug_samples.to(device)
+            aug_embeddings = model(aug_samples).cpu()
+            del aug_samples
 
-        embeddings = torch.cat([embeddings, aug_embeddings], dim=0)
-        labels = torch.cat([labels, labels], dim=0)
+        accumulated_embeddings.extend([embeddings, aug_embeddings])
+        accumulated_labels.extend([labels, labels])
 
-        indices_tuple = miner(embeddings, labels)
-        loss = loss_fun(embeddings, labels, indices_tuple)
-        loss.backward()
-        epoch_loss += loss.item()
-        running_loss += loss.item()
-        mined_triplets += miner.num_triplets
-        optimizer.step()
+        if (batch_idx + 1) % accumulation_steps == 0 or (batch_idx + 1) == len(train_loader):
+            embeddings = torch.cat(accumulated_embeddings, dim=0)
+            labels = torch.cat(accumulated_labels, dim=0)
+            accumulated_embeddings.clear()
+            accumulated_labels.clear()
+            indices_tuple = miner(embeddings, labels)
+            loss = loss_fun(embeddings, labels, indices_tuple)
+            del embeddings
+            del labels
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
+
+            epoch_loss += loss.item()
+            running_loss += loss.item()
+            mined_triplets += miner.num_triplets
+
         if batch_idx % update_interval == 0:
-            running_loss /= update_interval
+            running_loss /= n_accumulations
             pbar.set_postfix_str(f"Avg loss = {running_loss}, # mined triplets = {mined_triplets}")
             running_loss = 0.
 
     return epoch_loss
 
+
+@njit
+def is_sorted(a: np.ndarray):
+    for i in range(a.size - 1):
+         if a[i+1] < a[i] :
+               return False
+    return True
+
+
+@measure.fun
 @torch.no_grad()
 def val(model: nn.Module,
              val_loader: DataLoader,
@@ -92,21 +132,24 @@ def val(model: nn.Module,
         del samples
         embeddings.append(embs)
 
-    labels = np.concatenate(all_labels, axis=0)
+    labels = np.squeeze(np.concatenate(all_labels, axis=0))
     embeddings = np.concatenate(embeddings, axis=0)
-    radix_idx = round(len(labels) * 0.5)
+    # TODO: reference embeddings should be 1 from each category
+    assert is_sorted(labels), "Validation DataLoader should not shuffle data"
+    labels_vals = np.unique(labels)
+    labels_first_idxs = np.searchsorted(labels, labels_vals)
     mask = np.ones(len(labels)).astype(bool)
-    mask[:radix_idx] = False
-    np.random.shuffle(mask)
+    mask[labels_first_idxs] = False
 
     accuracies = accuracy_calculator.get_accuracy(embeddings[mask],
                                                   embeddings[~mask],
-                                                  np.squeeze(labels[mask]),
-                                                  np.squeeze(labels[~mask]),
-                                                  True)
+                                                  labels[mask],
+                                                  labels[~mask],
+                                                  False)
     return accuracies, embeddings, labels
 
 
+@measure.fun
 def embeddings_visualization(embeddings: np.ndarray,
                              labels: np.ndarray,
                              subset: Optional[Union[int, float]] = None):
@@ -119,7 +162,7 @@ def embeddings_visualization(embeddings: np.ndarray,
         embeddings = np.concatenate([embeddings[:subset], embeddings[half_idx:half_idx + subset]], axis=0)
         labels = np.concatenate([labels[:subset], labels[half_idx:half_idx + subset]], axis=0)
 
-    mapper = umap.UMAP().fit(embeddings)
+    mapper = umap.UMAP(metric="cosine").fit(embeddings)
     return umap.plot.points(mapper, labels=labels, theme='fire', height=1200, width=1200)
 
 
@@ -127,42 +170,46 @@ def save_model(model: nn.Module, name: str, out_dir: str):
     torch.save(model.state_dict(), path.join(out_dir, name))
 
 
+def flatten_params_dict(params: dict) -> dict:
+    out_dict = {}
+    for k, v in params.items():
+        if isinstance(v, (float, int, str, bool, type(None))):
+            out_dict[k] = v
+        elif isinstance(v, list):
+            out_dict[k] = str(v)
+        elif isinstance(v, dict):
+            partial = flatten_params_dict(v)
+            for kp, vp in partial.items():
+                out_dict[f"{k}/{kp}"] = vp
+        else:
+            raise ValueError("Not supported type for flattening the params dict: ", type(v))
+    return out_dict
+
+
+def flatten_config(config: dict) -> dict:
+    out = {}
+    for k, v in flatten_params_dict(config).items():
+        out[f"hparams/{k}"] = v
+    return out
+
+
 def main(config_path):
 
     with open(config_path, 'r') as f:
         params = json.load(f)
 
+    tb_writer.add_hparams(flatten_config(params), {})
+
     epochs = params["epochs"]
+    device = params["device"]
 
-    ### DONE
-    # LOAD DATASET - TRAIN/VAL
-    # DATALOADER
-    # CHOOSE OPTIMIZER
-    # INITIALIZE MODEL
-    # CUSTOM COLLATE FN FOR DATASET THAT RETURNS WEIRD THINGS
-    # TENSORBOARD LOGGING
-    # EMBEDDING VISUALIZATION HOOK, SAVE IMAGES TO TENSORBOARD?
-    # LOG TENSORBOARD OR SOMETHING ELSE TO RUN DIR
-
-    ### TODO:
-    # COPY CONFIG TO RUN DIR, OR JUST TENSORBOARD HPARAMS
-    # ADD HUMAN READABLE NAMES?
-
-    ### TODO?
-    # DATA PARALLEL?
-
-    # LOAD FULL DATASET, TRAIN/VAL DATALOADERS WITH SAMPLERS
     train_dataset = FunctionsDataset(**params['dataset'], **params['train_dataset'])
 
-    # return all files? Return all files of only couple of functions
     val_dataset = FunctionsDataset(**params['dataset'], **params['val_dataset'])
 
-    train_loader = DataLoader(train_dataset, num_workers=6, collate_fn=GraphCollater(), shuffle=True, batch_size=params['batch_size'])
-    # val_loader in specified order? Because of randomness in dataset each epoch will be different
-    val_loader = DataLoader(val_dataset, num_workers=6, collate_fn=GraphCollater(), batch_size=params['batch_size'])
+    train_loader = DataLoader(train_dataset, num_workers=6, collate_fn=Collater(), shuffle=True, batch_size=params['batch_size'])
+    val_loader = DataLoader(val_dataset, num_workers=6, collate_fn=Collater(), batch_size=params['batch_size'])
 
-    assert torch.cuda.is_available()
-    device = "cuda"
 
     encoder_type = params["encoder_type"].lower()
     if encoder_type == "lstm":
@@ -213,13 +260,14 @@ def main(config_path):
         ax = embeddings_visualization(embs, labels, **params["visualization"])
         tb_writer.add_figure("Embeddings", ax.figure, epoch)
 
+        pprint(measure.summary())
+
         save_model(encoder, f"model_{epoch}.pt", models_dir)
 
         if no_improvement_since > 5:
             break
 
     print("Training finished! Best accuracy:", best_acc)
-    save_model(encoder, f"best_{best_acc}.pt", models_dir)
 
 
 if __name__ == '__main__':

@@ -1,18 +1,21 @@
-from os import path, listdir
-from typing import Dict, Iterable, List, Tuple, Union, Set
+from os import makedirs, path, listdir
+from typing import Dict, List, Optional, Tuple, Union, Set
 import random
 from itertools import chain
 from collections import defaultdict
+from dask.array.slicing import cached_cumsum
 
-from torch.utils import data
 import torch
+from torch import Tensor, LongTensor, FloatTensor
+from torch.utils import data
 from torch_geometric.data import Data as geoData
 
 from datasets.utils.r_tokenizer import parse, tokenize, tokens2idxs, chars2idxs, num_tokens, num_chars
 from datasets.utils.graph_attrs import node_attrs
 from datasets.functions_errors import functions_errors
+from utils.measure_performance import measure
 
-RepresentationType = Union[torch.LongTensor, geoData]
+RepresentationType = Union[LongTensor, geoData]
 TripletType = Tuple[RepresentationType, RepresentationType, RepresentationType, int] # Anchor, Positive, Negative
 PairType = Tuple[RepresentationType, RepresentationType, int] # Sample1, Sample2, Plagiarism?
 SingleType = Tuple[RepresentationType, int]
@@ -27,7 +30,7 @@ class FunctionsDataset(data.Dataset):
                  mode: str = "pairs",
                  format: str = "tokens",
                  split_subset: int = 0,
-                 cache: bool = False):
+                 cache: Optional[str] = None):
 
         self.format = format.lower()
         assert self.format in ["graph", "tokens", "letters", "graph_directed"]
@@ -112,6 +115,7 @@ class FunctionsDataset(data.Dataset):
         return len(self.src_files)
 
 
+    @measure.fun
     def __getitem__(self, index: int) -> DatasetItemType:
         if self.triplets:
             return self._get_triplet(index)
@@ -171,10 +175,19 @@ class FunctionsDataset(data.Dataset):
         return random.choice(self.src_files[negative_base])
 
 
+    def _get_cache_path(self, src_path) -> Optional[str]:
+        if self.cache is None:
+            return None
+        relative_src_path = src_path.replace(self.root_dir, "")
+        cache_src_path = path.join(self.cache, self.format.replace("_directed", ""), relative_src_path + ".pt")
+        return cache_src_path
+
+
     def _parse_src(self, src_path: str) -> RepresentationType:
-        if path.exists(src_path + ".pt"):
+        cache_path = self._get_cache_path(src_path)
+        if cache_path is not None:
             try:
-                return torch.load(src_path + ".pt")
+                return torch.load(cache_path)
             except:
                 pass # fallback to standard parsing
         if self.graph:
@@ -182,8 +195,9 @@ class FunctionsDataset(data.Dataset):
         else:
             parsed_data = self._tokenize(open(src_path, "r").read())
         # cache
-        if self.cache:
-            torch.save(parsed_data, src_path + ".pt")
+        if cache_path is not None:
+            makedirs(path.dirname(cache_path), exist_ok=True)
+            torch.save(parsed_data, cache_path)
         return parsed_data
 
 
@@ -204,15 +218,15 @@ class FunctionsDataset(data.Dataset):
                 edge_attrs.append(tp)
                 edge_attrs.append(tp)
 
-        nodes = torch.LongTensor(nodes).reshape(-1, 1)
-        edges = torch.LongTensor(edges)
-        edge_attrs = torch.FloatTensor(edge_attrs).reshape(-1, 1)
+        nodes = LongTensor(nodes).reshape(-1, 1)
+        edges = LongTensor(edges)
+        edge_attrs = FloatTensor(edge_attrs).reshape(-1, 1)
         return geoData(x=nodes, edge_index=edges, edge_attr=edge_attrs)
 
 
-    def _tokenize(self, code: str) -> torch.LongTensor:
+    def _tokenize(self, code: str) -> LongTensor:
         if self.tokens:
             tokens: List[str] = tokenize(code)
-            return torch.LongTensor(tokens2idxs(tokens))
+            return LongTensor(tokens2idxs(tokens)).view(-1, 1)
         parsed_code: str = parse(code)
-        return torch.LongTensor(chars2idxs(parsed_code))
+        return LongTensor(chars2idxs(parsed_code)).view(-1, 1)

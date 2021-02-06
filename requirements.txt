@@ -15,6 +15,9 @@ torch-cluster
 torch-spline-conv
 torch-geometric
 pytorch-metric-learning
+umap-learn[plot]
+faiss-gpu
+
 
 # OPTIONAL
 ipython
