@@ -18,6 +18,11 @@ pytorch-metric-learning
 umap-learn[plot]
 faiss-gpu
 
+# baselines
+edit-distance
+https://github.com/Aalto-LeTech/greedy-string-tiling/archive/master.zip
+
+
 
 # OPTIONAL
 ipython
