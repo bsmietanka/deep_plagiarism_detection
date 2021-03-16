@@ -21,8 +21,7 @@ faiss-gpu
 # baselines
 edit-distance
 https://github.com/Aalto-LeTech/greedy-string-tiling/archive/master.zip
-
-
+git+https://github.com/Jacobe2169/GMatch4py.git
 
 # OPTIONAL
 ipython
