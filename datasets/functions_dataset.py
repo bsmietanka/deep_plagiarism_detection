@@ -16,7 +16,7 @@ from datasets.utils.graph_attrs import node_attrs
 from datasets.functions_errors import functions_errors
 from utils.measure_performance import measure
 
-TokensType = Union[LongTensor, str, List[int]]
+TokensType = Union[LongTensor, str, List[str]]
 GraphType = Union[Graph, geoData]
 RepresentationType = Union[TokensType, GraphType]
 TripletType = Tuple[RepresentationType, RepresentationType, RepresentationType, int] # Anchor, Positive, Negative
@@ -241,9 +241,9 @@ class FunctionsDataset(data.Dataset):
     def _tokenize(self, code: str) -> TokensType:
         if self.tokens:
             tokens: List[str] = tokenize(code)
-            idx_tokens: List[int] = tokens2idxs(tokens)
             if not self.return_tensor:
-                return idx_tokens
+                return tokens
+            idx_tokens: List[int] = tokens2idxs(tokens)
             return LongTensor(idx_tokens).view(-1, 1)
         parsed_code: str = parse(code)
         if not self.return_tensor:
