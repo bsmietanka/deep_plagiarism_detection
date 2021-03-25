@@ -3,19 +3,22 @@ from typing import Dict, List, Optional, Tuple, Union, Set
 import random
 from itertools import chain
 from collections import defaultdict
-from dask.array.slicing import cached_cumsum
 
 import torch
 from torch import Tensor, LongTensor, FloatTensor
 from torch.utils import data
 from torch_geometric.data import Data as geoData
+from networkx import Graph
+from torch_geometric.utils import to_networkx
 
 from datasets.utils.r_tokenizer import parse, tokenize, tokens2idxs, chars2idxs, num_tokens, num_chars
 from datasets.utils.graph_attrs import node_attrs
 from datasets.functions_errors import functions_errors
 from utils.measure_performance import measure
 
-RepresentationType = Union[LongTensor, geoData]
+TokensType = Union[LongTensor, str, List[int]]
+GraphType = Union[Graph, geoData]
+RepresentationType = Union[TokensType, GraphType]
 TripletType = Tuple[RepresentationType, RepresentationType, RepresentationType, int] # Anchor, Positive, Negative
 PairType = Tuple[RepresentationType, RepresentationType, int] # Sample1, Sample2, Plagiarism?
 SingleType = Tuple[RepresentationType, int]
@@ -29,9 +32,11 @@ class FunctionsDataset(data.Dataset):
                  split_file: str,
                  mode: str = "pairs",
                  format: str = "tokens",
-                 split_subset: int = 0,
-                 cache: Optional[str] = None):
+                 split_subset: Union[int, Tuple[int, int]] = 0,
+                 cache: Optional[str] = None,
+                 return_tensor: bool = True):
 
+        self.return_tensor = return_tensor
         self.format = format.lower()
         assert self.format in ["graph", "tokens", "letters", "graph_directed"]
 
@@ -59,8 +64,10 @@ class FunctionsDataset(data.Dataset):
         with open(path.join(self.root_dir, split_file)) as f:
             self.function_bases = list(map(lambda l: l.strip(), f.readlines()))
 
-        if split_subset > 0:
+        if isinstance(split_subset, int) and split_subset > 0:
             self.function_bases = self.function_bases[:split_subset]
+        elif isinstance(split_subset, tuple) and len(split_subset) == 2:
+            self.function_bases = self.function_bases[split_subset[0]:split_subset[1]]
 
         src_files: Dict[str, List[str]] = {}
         for fun_base in self.function_bases:
@@ -109,6 +116,10 @@ class FunctionsDataset(data.Dataset):
     @property
     def singles(self):
         return self.mode == "singles"
+
+
+    def num_functions(self) -> int:
+        return len(self.function_bases)
 
 
     def __len__(self) -> int:
@@ -201,7 +212,7 @@ class FunctionsDataset(data.Dataset):
         return parsed_data
 
 
-    def _parse_graph(self, src_path: str) -> geoData:
+    def _parse_graph(self, src_path: str) -> GraphType:
         with open(src_path, 'r') as f:
             nodes = list(map(int, f.readline().strip().split(",")))
             nodes = list(map(lambda x: node_attrs.index(x), nodes))
@@ -221,12 +232,20 @@ class FunctionsDataset(data.Dataset):
         nodes = LongTensor(nodes).reshape(-1, 1)
         edges = LongTensor(edges)
         edge_attrs = FloatTensor(edge_attrs).reshape(-1, 1)
-        return geoData(x=nodes, edge_index=edges, edge_attr=edge_attrs)
+        graph = geoData(x=nodes, edge_index=edges, edge_attr=edge_attrs)
+        if not self.return_tensor:
+            return to_networkx(graph)
+        return graph
 
 
-    def _tokenize(self, code: str) -> LongTensor:
+    def _tokenize(self, code: str) -> TokensType:
         if self.tokens:
             tokens: List[str] = tokenize(code)
-            return LongTensor(tokens2idxs(tokens)).view(-1, 1)
+            idx_tokens: List[int] = tokens2idxs(tokens)
+            if not self.return_tensor:
+                return idx_tokens
+            return LongTensor(idx_tokens).view(-1, 1)
         parsed_code: str = parse(code)
+        if not self.return_tensor:
+            return parsed_code
         return LongTensor(chars2idxs(parsed_code)).view(-1, 1)

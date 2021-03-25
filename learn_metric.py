@@ -26,17 +26,6 @@ from encoders import GraphEncoder, LSTMEncoder, TransformerEncoder
 from utils.measure_performance import measure
 
 
-runs_dir = "runs"
-start_time = datetime.now()
-formatted_start_time = start_time.strftime("%y-%m-%d %H:%M:%S")
-current_run_out_dir = path.join(runs_dir, formatted_start_time)
-log_dir = path.join(current_run_out_dir, "logs")
-makedirs(log_dir, exist_ok=True)
-tb_writer = SummaryWriter(log_dir)
-models_dir = path.join(current_run_out_dir, "models")
-makedirs(models_dir, exist_ok=True)
-
-
 @measure.fun
 def train_augs(model: nn.Module,
                loss_fun: losses.BaseMetricLossFunction,
@@ -197,6 +186,14 @@ def main(config_path):
 
     with open(config_path, 'r') as f:
         params = json.load(f)
+
+    runs_dir = "runs"
+    current_run_out_dir = path.join(runs_dir, config_path)
+    log_dir = path.join(current_run_out_dir, "logs")
+    makedirs(log_dir, exist_ok=True)
+    tb_writer = SummaryWriter(log_dir)
+    models_dir = path.join(current_run_out_dir, "models")
+    makedirs(models_dir, exist_ok=True)
 
     tb_writer.add_hparams(flatten_config(params), {})
 
