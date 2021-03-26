@@ -5,7 +5,7 @@ from itertools import chain
 from collections import defaultdict
 
 import torch
-from torch import Tensor, LongTensor, FloatTensor
+from torch import LongTensor, FloatTensor
 from torch.utils import data
 from torch_geometric.data import Data as geoData
 from networkx import Graph
@@ -19,10 +19,10 @@ from utils.measure_performance import measure
 TokensType = Union[LongTensor, str, List[str]]
 GraphType = Union[Graph, geoData]
 RepresentationType = Union[TokensType, GraphType]
-TripletType = Tuple[RepresentationType, RepresentationType, RepresentationType, int] # Anchor, Positive, Negative
-PairType = Tuple[RepresentationType, RepresentationType, int] # Sample1, Sample2, Plagiarism?
-SingleType = Tuple[RepresentationType, int]
-DatasetItemType = Union[TripletType, PairType, SingleType] # Triplet or Pair + index
+TripletType = Tuple[RepresentationType, RepresentationType, RepresentationType, int] # Anchor, Positive, Negative, Anchor index
+PairType = Tuple[RepresentationType, RepresentationType, int] # Sample1, AugSample2, Sample1 index
+SingleType = Tuple[RepresentationType, int] # Sample, index of base function
+DatasetItemType = Union[TripletType, PairType, SingleType]
 
 
 class FunctionsDataset(data.Dataset):

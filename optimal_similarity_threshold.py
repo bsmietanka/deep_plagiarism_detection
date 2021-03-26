@@ -1,3 +1,4 @@
+from functools import partial
 from itertools import combinations
 import json
 from typing import Callable, List, Union
@@ -18,9 +19,17 @@ MeasureType = Callable[[RepresentationType, RepresentationType], float]
 
 
 measures_by_format = {
-    "tokens": ["edit", "gst"],
-    "graph": ["graph_edit", "lambda", "wlk"]
+    # "tokens": ["edit", "gst"],
+    "graph": [
+        # "graph_edit",
+        # "lambda",
+        "wlk"]
     }
+
+root_dir_for_formats = {
+    "tokens": "data/functions",
+    "graph": "data/graph_functions"
+}
 
 measures_args = {
     "edit": [{}],
@@ -57,14 +66,26 @@ class Worker:
         return similarity
 
 
+def prepare_dataset(val_dataset, multiplier=4):
+    pairs = []
+    labels = []
+    for i in range(multiplier * len(val_dataset)):
+        a, p, n, _ = val_dataset[i % len(val_dataset)]
+        pairs.append((a, p))
+        labels.append(1)
+        pairs.append((a, n))
+        labels.append(0)
+    return pairs, np.array(labels)
+
+
 def calibrate_threshold(measure: MeasureType, val_pairs, val_labels):
 
-    with Pool(16) as pool:
-        val_similarities, val_labels = [], []
-        for pairs in val_pairs:
-            worker = Worker(measure)
-            similarities = np.array(tqdm(pool.imap(worker, pairs, chunksize=5), total=len(pairs)))
-            val_similarities.append(similarities)
+    val_similarities = []
+    for pairs in tqdm(val_pairs, desc=type(measure).__name__):
+        worker = Worker(measure)
+        with Pool() as pool:
+            similarities = list(pool.imap(worker, pairs))
+        val_similarities.append(np.array(similarities))
 
     # cache results? takes shitload of time
 
@@ -100,23 +121,20 @@ def main(n_funs_per_split: int = 20, multiplier: int = 4, dataset_args: dict = d
     for format, measures in measures_by_format.items():
 
         dataset_args["format"] = format
+        dataset_args["root_dir"] = root_dir_for_formats[format]
 
         val_datasets = [FunctionsDataset(**dataset_args, split_subset=(i * n_funs_per_split, (i + 1) * n_funs_per_split))
                         for i in range(num_funs // n_funs_per_split)]
 
-        val_pairs = []
-        val_labels = []
-        for val_dataset in tqdm(val_datasets, desc=f"Preparing {format} datasets"):
-            pairs = []
-            labels = []
-            for i in range(multiplier * len(val_dataset)):
-                a, p, n, _ = val_dataset[i % len(val_dataset)]
-                pairs.append((a, p))
-                labels.append(1)
-                pairs.append((a, n))
-                labels.append(0)
-            val_pairs.append(pairs)
-            val_labels.append(np.array(labels))
+        worker = partial(prepare_dataset, multiplier=multiplier)
+
+        with Pool() as pool:
+            val_pairs_labels = list(tqdm(
+                    pool.imap(worker, val_datasets[:2]),
+                    total=len(val_datasets),
+                    desc=f"Preparing {format} dataset"
+                    ))
+        val_pairs, val_labels = list(map(list, zip(*val_pairs_labels)))
 
 
         for method in measures:
@@ -125,13 +143,15 @@ def main(n_funs_per_split: int = 20, multiplier: int = 4, dataset_args: dict = d
                 measure = get_measure(method, **args)
                 opt_thr, f1_opt, f1_std = calibrate_threshold(measure, val_pairs, val_labels)
 
-                results.append({
+                partial_res = {
                     "measure": method,
                     "args": args,
                     "best_thr": opt_thr,
                     "best_avg_f1": f1_opt,
                     "f1_std": f1_std
-                })
+                }
+                print(partial_res)
+                results.append(partial_res)
 
     return results
 
@@ -145,7 +165,7 @@ if __name__ == "__main__":
         "format": "tokens",
         "return_tensor": False
     }
-    results = main("edit", n_funs_per_split=50, dataset_args=dataset_args_base)
+    results = main(n_funs_per_split=50, dataset_args=dataset_args_base)
 
     with open('thresholds.json', 'w') as outfile:
         json.dump(results, outfile)

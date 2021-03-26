@@ -1,6 +1,7 @@
 matplotlib
 numpy
 pandas
+Cython
 scikit-learn
 scipy
 seaborn
@@ -9,16 +10,18 @@ torch
 rpy2
 tqdm
 tensorboard
-torch-scatter
-torch-sparse
-torch-cluster
-torch-spline-conv
-torch-geometric
+# torch-scatter
+# torch-sparse
+# torch-cluster
+# torch-spline-conv
+# torch-geometric
 pytorch-metric-learning
 umap-learn[plot]
 faiss-gpu
+networkx
 
 # baselines
+netcomp
 edit-distance
 git+https://github.com/rvsia/scored-greedy-string-tiling
 git+https://github.com/bsmietanka/GMatch4py

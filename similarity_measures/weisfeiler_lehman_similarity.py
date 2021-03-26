@@ -1,17 +1,16 @@
 from typing import Union
+
 import gmatch4py as gm
 from networkx import Graph
 from torch_geometric.data import Data
 from torch_geometric.utils import to_networkx
-
-
 
 GraphType = Union[Data, Graph]
 
 class WeisfeilerLehmanSimilarity:
 
     def __init__(self, h: int = 2):
-        self.wlk = gm.WeisfeilerLehmanKernel(h)
+        self.wlk = gm.kernels.weisfeiler_lehman.WeisfeleirLehmanKernel(h)
 
 
     def __call__(self, g1: GraphType, g2: GraphType) -> float:
