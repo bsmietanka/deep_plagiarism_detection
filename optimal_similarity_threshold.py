@@ -1,5 +1,4 @@
 from functools import partial
-from itertools import combinations
 import json
 from typing import Callable, List, Union
 from multiprocessing import Pool
@@ -11,7 +10,6 @@ from networkx import Graph
 
 from datasets.functions_dataset import FunctionsDataset
 from similarity_measures import *
-from datasets.utils.r_tokens import r_tokens
 
 
 RepresentationType = Union[str, List[int], Graph]
@@ -19,11 +17,15 @@ MeasureType = Callable[[RepresentationType, RepresentationType], float]
 
 
 measures_by_format = {
-    # "tokens": ["edit", "gst"],
+    "tokens": [
+        "edit",
+        "gst"
+        ],
     "graph": [
-        # "graph_edit",
-        # "lambda",
-        "wlk"]
+        "graph_edit",
+        "lambda",
+        "wlk"
+        ]
     }
 
 root_dir_for_formats = {
@@ -36,7 +38,7 @@ measures_args = {
     "gst": [{"min_len": val} for val in range(3, 20, 2)],
     "graph_edit": [{}],
     "lambda": [{"k": val} for val in [10, 30, 100, None]],
-    "wlk": [{"h": val} for val in [2, 5, 9, 13, 17, 20]]
+    "wlk": [{"h": val} for val in [2, 5, 9, 13, 17, 20]],
 }
 
 
@@ -160,7 +162,7 @@ def main(n_funs_per_split: int = 20, multiplier: int = 4, dataset_args: dict = d
 if __name__ == "__main__":
     dataset_args_base = {
         "root_dir": "data/functions",
-        "split_file": "train.txt",
+        "split_file": "val.txt",
         "mode": "triplets",
         "format": "tokens",
         "return_tensor": False

@@ -1,39 +1,49 @@
 import argparse
 import json
-from datetime import datetime
 from os import makedirs, path
+from shutil import copyfile
 from typing import List, Optional, Union
 from pprint import pprint
+
+from torch.optim import lr_scheduler
+from utils.train_utils import get_model
 
 import numpy as np
 import torch
 import umap
 import umap.plot
-from torch import nn
-from torch import Tensor
-from pytorch_metric_learning import distances, losses, miners
+from torch import nn, Tensor
+from pytorch_metric_learning import distances, losses, miners, samplers
 from pytorch_metric_learning.utils.accuracy_calculator import \
     AccuracyCalculator
 from torch import optim
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data.dataloader import DataLoader
+from torch.utils.data import TensorDataset, ConcatDataset
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 from numba import njit
+from sklearn.metrics import accuracy_score, f1_score
 
 from datasets.utils.collate import Collater
 from datasets.functions_dataset import FunctionsDataset
-from encoders import GraphEncoder, LSTMEncoder, TransformerEncoder
+from encoders.classifier import Classifier
 from utils.measure_performance import measure
 
 
+
+# TODO: singles dataset, calculate embeddings, mine hard triplets, classification train on hard triplets
+
+
 @measure.fun
-def train_augs(model: nn.Module,
+def train_augs(model: Union[nn.Module, Classifier],
                loss_fun: losses.BaseMetricLossFunction,
                miner: miners.BaseMiner,
                device: str,
                train_loader: DataLoader,
                optimizer: optim.Optimizer,
-               update_interval: Union[int, float] = 0.5):
+               update_interval: Union[int, float] = 0.5,
+               classification: bool = False):
     model.train()
 
     epoch_loss = 0.
@@ -58,12 +68,12 @@ def train_augs(model: nn.Module,
     pbar = tqdm(train_loader, desc="Training")
     for batch_idx, (samples, aug_samples, labels) in enumerate(pbar, 1):
 
-        with measure.block("sample1_encoding"):
+        with measure.block("sample_encoding"):
             samples = samples.to(device)
             embeddings = model(samples).cpu()
             del samples
 
-        with measure.block("sample2_encoding"):
+        with measure.block("sample_encoding"):
             aug_samples = aug_samples.to(device)
             aug_embeddings = model(aug_samples).cpu()
             del aug_samples
@@ -76,8 +86,25 @@ def train_augs(model: nn.Module,
             labels = torch.cat(accumulated_labels, dim=0)
             accumulated_embeddings.clear()
             accumulated_labels.clear()
+
+        # embeddings = torch.cat([embeddings, aug_embeddings], dim=0)
+        # labels = torch.cat([labels, labels], dim=0)
+
             indices_tuple = miner(embeddings, labels)
-            loss = loss_fun(embeddings, labels, indices_tuple)
+
+            emb_loss = loss_fun(embeddings, labels, indices_tuple)
+
+            if classification:
+                a = embeddings[indices_tuple[0]].to(device)
+                p = embeddings[indices_tuple[1]].to(device)
+                n = embeddings[indices_tuple[2]].to(device)
+                pred_p = model.classify_embs(a, p)
+                pred_n = model.classify_embs(a, n)
+                cls_loss_fun = nn.BCELoss()
+                cls_loss = cls_loss_fun(torch.cat([pred_p, pred_n], dim=0), torch.cat([torch.ones_like(pred_p), torch.zeros_like(pred_n)], dim=0))
+                loss = cls_loss + emb_loss
+            else:
+                loss = emb_loss
             del embeddings
             del labels
             loss.backward()
@@ -93,7 +120,7 @@ def train_augs(model: nn.Module,
             pbar.set_postfix_str(f"Avg loss = {running_loss}, # mined triplets = {mined_triplets}")
             running_loss = 0.
 
-    return epoch_loss
+    return epoch_loss / len(train_loader)
 
 
 @njit
@@ -103,17 +130,20 @@ def is_sorted(a: np.ndarray):
                return False
     return True
 
+cache = dict()
 
 @measure.fun
 @torch.no_grad()
-def val(model: nn.Module,
-             val_loader: DataLoader,
-             accuracy_calculator: AccuracyCalculator,
-             device: str):
+def val(model: Union[nn.Module, Classifier],
+        val_loader: DataLoader,
+        accuracy_calculator: AccuracyCalculator,
+        device: str,
+        classification: bool = False):
+
     model.eval()
     embeddings = []
     all_labels = []
-    for samples, labels in tqdm(val_loader, desc="Validation"):
+    for samples, labels, bases in tqdm(val_loader, desc="Validation"):
         all_labels.append(labels.numpy())
 
         samples = samples.to(device)
@@ -123,7 +153,6 @@ def val(model: nn.Module,
 
     labels = np.squeeze(np.concatenate(all_labels, axis=0))
     embeddings = np.concatenate(embeddings, axis=0)
-    # TODO: reference embeddings should be 1 from each category
     assert is_sorted(labels), "Validation DataLoader should not shuffle data"
     labels_vals = np.unique(labels)
     labels_first_idxs = np.searchsorted(labels, labels_vals)
@@ -135,6 +164,35 @@ def val(model: nn.Module,
                                                   labels[mask],
                                                   labels[~mask],
                                                   False)
+
+    if classification:
+        embeddings = torch.tensor(embeddings)
+        labels = torch.tensor(labels)
+
+        if "triplets" not in cache:
+            cache["triplets"] = samplers.FixedSetOfTriplets(labels, 100000).fixed_set_of_triplets
+        # miner = miners.TripletMarginMiner(distance=distances.CosineSimilarity(), type_of_triplets="hard")
+        # indices_tuple = miner(embeddings, labels)
+        triplets = cache["triplets"]
+        a = embeddings[triplets[:, 0]]
+        p = embeddings[triplets[:, 1]]
+        n = embeddings[triplets[:, 2]]
+        cls_dataset = TensorDataset(a, p, n)
+        cls_dataloader = DataLoader(cls_dataset, 512, num_workers=10)
+        prob = []
+        y_true = []
+        for ba, bp, bn in tqdm(cls_dataloader, desc="Classification"):
+            ba = ba.to(device)
+            prob_p = model.classify_embs(ba, bp.to(device)).cpu().numpy()
+            prob_n = model.classify_embs(ba, bn.to(device)).cpu().numpy()
+            y_true.extend([np.ones_like(prob_p), np.zeros_like(prob_n)])
+            prob.extend([prob_p, prob_n])
+        y_true = np.concatenate(y_true)
+        prob = np.concatenate(prob)
+        pred = prob > 0.5
+        accuracies["accuracy"] = accuracy_score(pred, y_true)
+        accuracies["f1_score"] = f1_score(pred, y_true)
+
     return accuracies, embeddings, labels
 
 
@@ -188,7 +246,10 @@ def main(config_path):
         params = json.load(f)
 
     runs_dir = "runs"
-    current_run_out_dir = path.join(runs_dir, config_path)
+    current_run_out_dir = path.join(runs_dir, config_path.replace(".json", ""))
+    if path.exists(current_run_out_dir):
+        from shutil import rmtree
+        rmtree(current_run_out_dir)
     log_dir = path.join(current_run_out_dir, "logs")
     makedirs(log_dir, exist_ok=True)
     tb_writer = SummaryWriter(log_dir)
@@ -199,72 +260,77 @@ def main(config_path):
 
     epochs = params["epochs"]
     device = params["device"]
+    patience = params["patience"]
+
+    classification = params["classification"]
 
     train_dataset = FunctionsDataset(**params['dataset'], **params['train_dataset'])
+    concat_dataset = ConcatDataset([train_dataset for i in range(params.get("multiplier", 1))])
 
     val_dataset = FunctionsDataset(**params['dataset'], **params['val_dataset'])
 
-    train_loader = DataLoader(train_dataset, num_workers=6, collate_fn=Collater(), shuffle=True, batch_size=params['batch_size'])
-    val_loader = DataLoader(val_dataset, num_workers=6, collate_fn=Collater(), batch_size=params['batch_size'])
+    train_loader = DataLoader(concat_dataset, num_workers=6, pin_memory=True, collate_fn=Collater(), shuffle=True, batch_size=params['batch_size'])
+    val_loader = DataLoader(val_dataset, num_workers=6, pin_memory=True, collate_fn=Collater(), batch_size=params['batch_size'])
 
 
-    encoder_type = params["encoder_type"].lower()
-    if encoder_type == "lstm":
-        assert not train_dataset.graph
-        encoder = LSTMEncoder(**params['encoder'], vocab_size=train_dataset.num_tokens)
-    elif encoder_type == "transformer":
-        assert not train_dataset.graph
-        encoder = TransformerEncoder(**params['encoder'], vocab_size=train_dataset.num_tokens)
-    elif encoder_type == "gnn":
-        assert train_dataset.graph
-        encoder = GraphEncoder(**params['encoder'], input_dim=train_dataset.num_tokens)
-    else:
-        raise ValueError("Unsupported encoder type")
-
-    encoder.to(device)
+    encoder = get_model(params["encoder_type"], train_dataset, device=device, **params["encoder"])
 
     # Set optimizers
     optimizer = optim.Adam(encoder.parameters(), **params["optimizer"])
 
+    # distance = distances.LpDistance()
     distance = distances.CosineSimilarity()
     # TODO?: Try other losses, eg. ContrastiveLoss
     loss_func = losses.TripletMarginLoss(distance=distance)
 
-    # TODO?: Try other miners, eg. TripletMarginMiner
-    miner = miners.TripletMarginMiner(type_of_triplets="semihard", distance=distance)
-    # miner = miners.TripletMarginMiner(distance=distance, type_of_triplets="semihard")
-    accuracy_calculator = AccuracyCalculator(include=("precision_at_1", "mean_average_precision_at_r"), k = 1)
+    miner = miners.TripletMarginMiner(type_of_triplets="all", distance=distance)
+
+    accuracy_calculator = AccuracyCalculator(include=("mean_average_precision_at_r",))
 
 
+    lr_scheduler = ReduceLROnPlateau(optimizer, mode="min", factor=0.1, patience=5, verbose=True)
     best_acc = 0.
     no_improvement_since = 0
+    best_weights_path = ""
     for epoch in range(1, epochs + 1):
-        print(f"EPOCH #{epoch}")
+        print(f"EPOCH #{epoch} (BEST ACC = {best_acc})")
 
-        loss = train_augs(encoder, loss_func, miner, device, train_loader, optimizer, **params['training'])
+        loss = train_augs(encoder, loss_func, miner, device, train_loader, optimizer, classification=classification, **params['training'])
+        lr_scheduler.step(loss)
         tb_writer.add_scalar("Loss/Training", loss, epoch)
 
-        accuracies, embs, labels = val(encoder, val_loader, accuracy_calculator, device, **params["val"])
+        accuracies, embs, labels = val(encoder, val_loader, accuracy_calculator, device, classification=classification, **params["val"])
 
-        acc = accuracies['precision_at_1']
-        if best_acc < acc:
+        accuracies["loss"] = loss
+        acc = accuracies['mean_average_precision_at_r']
+        if classification:
+            acc = accuracies["accuracy"]
+        if acc > best_acc:
             best_acc = acc
             no_improvement_since = 0
+            weights_filename = f"model_{epoch}.pt"
+            save_model(encoder, weights_filename, models_dir)
+            best_weights_path = path.join(models_dir, weights_filename)
         else:
             no_improvement_since += 1
-        tb_writer.add_scalar("Accuracy/Val", accuracies['precision_at_1'], epoch)
+
+        tb_writer.add_scalar("MAP@R/Val", accuracies['mean_average_precision_at_r'], epoch)
+        if classification:
+            tb_writer.add_scalar("F1/Val", accuracies['f1_score'], epoch)
+            tb_writer.add_scalar("Accuracy/Val", accuracies['accuracy'], epoch)
 
         ax = embeddings_visualization(embs, labels, **params["visualization"])
         tb_writer.add_figure("Embeddings", ax.figure, epoch)
 
-        pprint(measure.summary())
+        pprint(accuracies)
 
-        save_model(encoder, f"model_{epoch}.pt", models_dir)
-
-        if no_improvement_since > 5:
+        if no_improvement_since > patience:
             break
 
-    print("Training finished! Best accuracy:", best_acc)
+    pprint(measure.summary())
+
+    copyfile(best_weights_path, path.join(models_dir, "best.pt"))
+    return best_acc
 
 
 if __name__ == '__main__':
@@ -274,4 +340,5 @@ if __name__ == '__main__':
         help='Path to config file with parameters, look at config.json')
     args = parser.parse_args()
 
-    main(args.config_path)
+    best_acc = main(args.config_path)
+    print("Training finished! Best accuracy:", best_acc)

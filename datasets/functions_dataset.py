@@ -1,13 +1,14 @@
 from os import makedirs, path, listdir
 from typing import Dict, List, Optional, Tuple, Union, Set
 import random
-from itertools import chain
 from collections import defaultdict
 
 import torch
 from torch import LongTensor, FloatTensor
 from torch.utils import data
 from torch_geometric.data import Data as geoData
+from torch_geometric.utils.loop import remove_self_loops
+from tqdm import tqdm
 from networkx import Graph
 from torch_geometric.utils import to_networkx
 
@@ -20,8 +21,8 @@ TokensType = Union[LongTensor, str, List[str]]
 GraphType = Union[Graph, geoData]
 RepresentationType = Union[TokensType, GraphType]
 TripletType = Tuple[RepresentationType, RepresentationType, RepresentationType, int] # Anchor, Positive, Negative, Anchor index
-PairType = Tuple[RepresentationType, RepresentationType, int] # Sample1, AugSample2, Sample1 index
-SingleType = Tuple[RepresentationType, int] # Sample, index of base function
+PairType = Tuple[RepresentationType, RepresentationType, int, int] # Sample1, Sample2, Sample1 index, Sample2 index
+SingleType = Tuple[RepresentationType, int, int] # Sample, index of base function
 DatasetItemType = Union[TripletType, PairType, SingleType]
 
 
@@ -34,9 +35,15 @@ class FunctionsDataset(data.Dataset):
                  format: str = "tokens",
                  split_subset: Union[int, Tuple[int, int]] = 0,
                  cache: Optional[str] = None,
-                 return_tensor: bool = True):
+                 return_tensor: bool = True,
+                 only_augs: bool = True,
+                 remove_self_loops: bool = False):
 
         self.return_tensor = return_tensor
+        self.remove_self_loops = remove_self_loops
+        self.only_augs = only_augs
+        self.augs = True
+
         self.format = format.lower()
         assert self.format in ["graph", "tokens", "letters", "graph_directed"]
 
@@ -78,7 +85,11 @@ class FunctionsDataset(data.Dataset):
             src_files[fun_base] = paths
 
         if self.singles:
-            self.src_files = list(chain(*src_files.values()))
+            self.labels = []
+            self.src_files = []
+            for base, funs in tqdm(src_files.items()):
+                self.labels.extend([self.function_bases.index(base) for i in range(len(funs))])
+                self.src_files.extend(funs)
         else:
             self.src_files = src_files
 
@@ -126,7 +137,6 @@ class FunctionsDataset(data.Dataset):
         return len(self.src_files)
 
 
-    @measure.fun
     def __getitem__(self, index: int) -> DatasetItemType:
         if self.triplets:
             return self._get_triplet(index)
@@ -161,15 +171,28 @@ class FunctionsDataset(data.Dataset):
     def _get_pair(self, index: int) -> PairType:
         base = self.function_bases[index]
         base_src_files = self.src_files[base]
-        if len(base_src_files) > 1:
-            sample1_path, sample2_path = random.sample(base_src_files, 2)
+        if self.augs:
+            index2 = index
+            if len(base_src_files) > 1:
+                sample1_path, sample2_path = random.sample(base_src_files, 2)
+            else:
+                sample1_path, sample2_path = base_src_files[0], base_src_files[0]
         else:
-            sample1_path, sample2_path = base_src_files[0], base_src_files[0]
+            sample1_path = random.choice(base_src_files)
+            base2 = base_src_files
+            while base2 == base_src_files:
+                base2 = random.choice(self.function_bases)
+            index2 = self.function_bases.index(base2)
+            sample2_src_files = self.src_files[base2]
+            sample2_path = random.choice(sample2_src_files)
+
+        if not self.only_augs:
+            self.augs = not self.augs
 
         sample1 = self._parse_src(sample1_path)
         sample2 = self._parse_src(sample2_path)
 
-        return sample1, sample2, index
+        return sample1, sample2, index, index2
 
 
     def _get_single(self, index: int) -> SingleType:
@@ -177,7 +200,7 @@ class FunctionsDataset(data.Dataset):
         base = path.dirname(src_file.replace(self.root_dir, ""))
 
         sample = self._parse_src(src_file)
-        return sample, self.function_bases.index(base)
+        return sample, self.function_bases.index(base), index
 
 
     def _get_negative_path(self, anchor) -> str:
@@ -233,6 +256,8 @@ class FunctionsDataset(data.Dataset):
         edges = LongTensor(edges)
         edge_attrs = FloatTensor(edge_attrs).reshape(-1, 1)
         graph = geoData(x=nodes, edge_index=edges, edge_attr=edge_attrs)
+        if self.remove_self_loops:
+            graph.edge_index, graph.edge_attr = remove_self_loops(graph.edge_index, graph.edge_attr)
         if not self.return_tensor:
             return to_networkx(graph)
         return graph

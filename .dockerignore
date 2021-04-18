@@ -1,0 +1,7 @@
+data
+configs
+runs
+.vscode
+.git
+__pycache__
+venv

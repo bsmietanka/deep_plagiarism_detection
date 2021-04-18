@@ -2,86 +2,79 @@ from typing import Optional, Sequence, Union
 
 import torch
 from torch import nn
+from torch.nn import Linear, Sequential, ReLU, BatchNorm1d as BN
 from torch.nn import functional as F
-from torch.nn.modules.normalization import LayerNorm
-from torch_geometric import nn as pyg_nn
 from torch_geometric.data import Batch
+from torch_geometric.nn import GINConv, global_mean_pool, global_add_pool, JumpingKnowledge
+
+
+
+class GIN0(nn.Module):
+    def __init__(self, node_features: int, hidden_dim: int, num_layers: int = 5, train_eps: bool = False):
+        super().__init__()
+        self.conv1 = GINConv(
+            Sequential(
+                Linear(node_features, hidden_dim),
+                ReLU(),
+                Linear(hidden_dim, hidden_dim),
+                ReLU(),
+                BN(hidden_dim),
+            ), train_eps=train_eps)
+        self.convs = nn.ModuleList()
+        for i in range(num_layers - 1):
+            self.convs.append(
+                GINConv(
+                    Sequential(
+                        Linear(hidden_dim, hidden_dim),
+                        ReLU(),
+                        Linear(hidden_dim, hidden_dim),
+                        ReLU(),
+                        BN(hidden_dim),
+                    ), train_eps=train_eps))
+        self.lin1 = Linear(hidden_dim, hidden_dim)
+
+    def reset_parameters(self):
+        self.conv1.reset_parameters()
+        for conv in self.convs:
+            conv.reset_parameters()
+        self.lin1.reset_parameters()
+
+    def forward(self, data):
+        x, edge_index, batch = data.x, data.edge_index, data.batch
+        x = self.conv1(x, edge_index)
+        for conv in self.convs:
+            x = conv(x, edge_index)
+        x = global_add_pool(x, batch)
+        x = F.relu(self.lin1(x))
+        return x
+
+    def __repr__(self):
+        return self.__class__.__name__
 
 
 class GraphEncoder(nn.Module):
     def __init__(self,
                  input_dim: int,
-                 hidden_dims: Sequence[int],
-                 num_node_embeddings: int = 4,
-                 layer_type: str = "gcn",
-                 post_mp_dim: Optional[int] = None):
+                 hidden_dim: int,
+                 node_labels: int,
+                 num_layers: int = 5,
+                 node_embeddings: Optional[int] = None,
+                 train_eps: bool = False):
         super().__init__()
+        self.out_dim = hidden_dim
 
-        self.layer_type = layer_type.lower()
+        if node_embeddings is not None:
+            self.node_embeddings = nn.Embedding(node_labels, embedding_dim=node_embeddings)
+        else:
+            self.node_embeddings = nn.Identity()
 
-        self.node_embeddings = nn.Embedding(input_dim, embedding_dim=num_node_embeddings)
-
-        self.dropout_rate = 0.25
-        self.num_layers = len(hidden_dims)
-
-        self.convs = nn.ModuleList()
-        self.lns = nn.ModuleList()
-        prev_dim = num_node_embeddings
-        for i, hidden_dim in enumerate(hidden_dims, 1):
-            self.convs.append(self._gnn_layer(prev_dim, hidden_dim))
-            if i != self.num_layers:
-                self.lns.append(LayerNorm(hidden_dim))
-            prev_dim = hidden_dim
-
-        # post-message-passing
-        self.post_mp = self._post_mp(prev_dim, post_mp_dim)
-
-
-    def _gnn_layer(self, input_dim: int, hidden_dim: int) -> pyg_nn.MessagePassing:
-        if self.layer_type == "gcn":
-            return pyg_nn.GCNConv(input_dim, hidden_dim)
-
-        if self.layer_type == "conv":
-            return pyg_nn.GraphConv(input_dim, hidden_dim)
-
-        if self.layer_type == "gin":
-            return pyg_nn.GINConv(
-                nn.Sequential(
-                        nn.Linear(input_dim, hidden_dim),
-                        nn.ReLU(),
-                        nn.Linear(hidden_dim, hidden_dim)
-                    )
-                )
-
-        # Try TransformerConv, SAGEConv, GATConv?
-        raise ValueError("Not supported GNN layer type")
-
-
-    def _post_mp(self, input_dim: int, output_dim: Optional[int]) -> nn.Module:
-        if output_dim is None:
-            return nn.Sequential() # identity
-
-        return nn.Sequential(
-                nn.Linear(input_dim, input_dim),
-                nn.Dropout(self.dropout_rate),
-                nn.Linear(input_dim, output_dim)
-            )
+        node_features = node_embeddings if node_embeddings is not None else input_dim
+        self.model = GIN0(node_features, hidden_dim, num_layers, train_eps)
 
 
     def forward(self, data: Batch) -> torch.FloatTensor:
-        node, edge_index, edge_attr, batch = data.x, data.edge_index, data.edge_attr, data.batch
+        data.x = self.node_embeddings(data.x).float()
 
-        x = self.node_embeddings(node).squeeze()
-
-        for i in range(self.num_layers):
-            x = self.convs[i](x, edge_index)
-            x = F.relu(x)
-            x = F.dropout(x, p=self.dropout_rate, training=self.training)
-            if i < self.num_layers - 1:
-                x = self.lns[i](x)
-
-        x = pyg_nn.global_mean_pool(x, batch)
-
-        x = self.post_mp(x)
+        x = self.model(data)
 
         return x

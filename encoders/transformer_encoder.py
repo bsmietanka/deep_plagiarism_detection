@@ -12,6 +12,7 @@ class TransformerEncoder(nn.Module):
 
     def __init__(self, vocab_size, embedding_dim, hidden_dim, num_layers: int = 1, nhead=4):
         super().__init__()
+        self.out_dim = hidden_dim
 
         self.word_embeddings = nn.Embedding(vocab_size, embedding_dim=embedding_dim, padding_idx=0)
 
