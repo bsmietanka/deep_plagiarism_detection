@@ -16,7 +16,7 @@ from datasets.functions_dataset import FunctionsDataset
 RepresentationType = Union[Data]
 
 measures_args = {
-    "wlk": [2, 5, 9, 13, 17, 20],
+    "wlk": [3, 7, 13, 20],
 }
 
 def pyg2ig(g: Data) -> ig.Graph:

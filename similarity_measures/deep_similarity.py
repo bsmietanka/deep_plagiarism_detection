@@ -20,6 +20,7 @@ class DeepSimilarity:
     def __init__(self, *args, **kwargs):
         self.device = kwargs["device"]
         self.encoder = get_model(**kwargs)
+        self.encoder.eval()
 
 
     def _batch(self, f: SequenceType) -> SequenceType:

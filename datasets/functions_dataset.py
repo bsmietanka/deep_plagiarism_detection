@@ -34,6 +34,7 @@ class FunctionsDataset(data.Dataset):
                  mode: str = "pairs",
                  format: str = "tokens",
                  split_subset: Union[int, Tuple[int, int]] = 0,
+                 multiplier: int = 1,
                  cache: Optional[str] = None,
                  return_tensor: bool = True,
                  only_augs: bool = True,
@@ -43,6 +44,7 @@ class FunctionsDataset(data.Dataset):
         self.remove_self_loops = remove_self_loops
         self.only_augs = only_augs
         self.augs = True
+        self.multiplier = multiplier
 
         self.format = format.lower()
         assert self.format in ["graph", "tokens", "letters", "graph_directed"]
@@ -134,10 +136,11 @@ class FunctionsDataset(data.Dataset):
 
 
     def __len__(self) -> int:
-        return len(self.src_files)
+        return self.multiplier * len(self.src_files)
 
 
     def __getitem__(self, index: int) -> DatasetItemType:
+        index = index % len(self.src_files)
         if self.triplets:
             return self._get_triplet(index)
         elif self.pairs:

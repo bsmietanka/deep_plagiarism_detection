@@ -3,9 +3,8 @@ from typing import Optional, Sequence, Union
 import torch
 from torch import nn
 from torch.nn import Linear, Sequential, ReLU, BatchNorm1d as BN
-from torch.nn import functional as F
 from torch_geometric.data import Batch
-from torch_geometric.nn import GINConv, global_mean_pool, global_add_pool, JumpingKnowledge
+from torch_geometric.nn import GINConv, GINEConv, global_mean_pool, JumpingKnowledge
 
 
 
@@ -44,8 +43,8 @@ class GIN0(nn.Module):
         x = self.conv1(x, edge_index)
         for conv in self.convs:
             x = conv(x, edge_index)
-        x = global_add_pool(x, batch)
-        x = F.relu(self.lin1(x))
+        x = global_mean_pool(x, batch)
+        x = self.lin1(x)
         return x
 
     def __repr__(self):
@@ -56,7 +55,7 @@ class GraphEncoder(nn.Module):
     def __init__(self,
                  input_dim: int,
                  hidden_dim: int,
-                 node_labels: int,
+                 node_labels: int = -1,
                  num_layers: int = 5,
                  node_embeddings: Optional[int] = None,
                  train_eps: bool = False):
@@ -74,6 +73,8 @@ class GraphEncoder(nn.Module):
 
     def forward(self, data: Batch) -> torch.FloatTensor:
         data.x = self.node_embeddings(data.x).float()
+        if len(data.x.shape) == 3:
+            data.x = data.x.squeeze()
 
         x = self.model(data)
 

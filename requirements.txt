@@ -17,10 +17,12 @@ tensorboard
 # torch-geometric
 pytorch-metric-learning
 umap-learn[plot]
-faiss-gpu
+faiss-cpu
 networkx
 
 # baselines
+python-igraph
+wwl
 netcomp
 edit-distance
 git+https://github.com/rvsia/scored-greedy-string-tiling

@@ -17,13 +17,13 @@ MeasureType = Callable[[RepresentationType, RepresentationType], float]
 
 
 measures_by_format = {
-    "tokens": [
-        "edit",
-        "gst"
-        ],
+    # "tokens": [
+    #     "edit",
+    #     "gst"
+    #     ],
     "graph": [
-        "graph_edit",
-        "lambda",
+        # "graph_edit",
+        # "lambda",
         "wlk"
         ]
     }
@@ -38,7 +38,7 @@ measures_args = {
     "gst": [{"min_len": val} for val in range(3, 20, 2)],
     "graph_edit": [{}],
     "lambda": [{"k": val} for val in [10, 30, 100, None]],
-    "wlk": [{"h": val} for val in [2, 5, 9, 13, 17, 20]],
+    "wlk": [{"h": val} for val in [5, 9, 13, 20]],
 }
 
 
@@ -132,7 +132,7 @@ def main(n_funs_per_split: int = 20, multiplier: int = 4, dataset_args: dict = d
 
         with Pool() as pool:
             val_pairs_labels = list(tqdm(
-                    pool.imap(worker, val_datasets[:2]),
+                    pool.imap(worker, val_datasets),
                     total=len(val_datasets),
                     desc=f"Preparing {format} dataset"
                     ))

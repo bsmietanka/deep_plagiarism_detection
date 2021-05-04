@@ -20,7 +20,7 @@ MeasureType = Callable[[RepresentationType, RepresentationType], float]
 
 configs_by_format = {
     "graph": [
-        "configs/graphs/config.json"
+        "config.json"
     ],
     # "tokens": [
     #     "configs/tokens/config.json"
@@ -45,9 +45,6 @@ def calibrate_threshold(measure: MeasureType, val_pairs, val_labels):
             similarities.append(measure(*pair))
         val_similarities.append(np.array(similarities))
 
-    print(val_similarities)
-    print(val_labels)
-
     def objective_function(thr, val_similarities, val_labels):
         assert len(val_similarities) == len(val_labels)
         f1s = []
@@ -58,7 +55,7 @@ def calibrate_threshold(measure: MeasureType, val_pairs, val_labels):
     best_f1 = 0
     best_thr = 0
     best_std = 0
-    for thr in np.linspace(0., 1., 1001):
+    for thr in tqdm(np.linspace(0., 1., 1001)):
         f1, std = objective_function(thr, val_similarities, val_labels)
         if f1 > best_f1:
             best_f1 = f1
@@ -92,7 +89,7 @@ def main(n_funs_per_split: int = 20, multiplier: int = 4, dataset_args: dict = d
         num_funs = dataset.num_functions()
 
         val_datasets = [FunctionsDataset(**dataset_args, split_subset=(i * n_funs_per_split, (i + 1) * n_funs_per_split))
-                        for i in range(num_funs // n_funs_per_split)][:1]
+                        for i in range(num_funs // n_funs_per_split)]
 
         worker = partial(prepare_dataset, multiplier=multiplier)
 
@@ -134,6 +131,6 @@ if __name__ == "__main__":
     }
     results = main(n_funs_per_split=50, dataset_args=dataset_args_base)
 
-    with open('thresholds.json', 'w') as outfile:
+    with open('deep_thresholds.json', 'w') as outfile:
         json.dump(results, outfile)
 
