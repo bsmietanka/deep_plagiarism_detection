@@ -21,10 +21,11 @@ MeasureType = Callable[[RepresentationType, RepresentationType], float]
 
 configs_by_format = {
     "graph": [
-        "configs/graphs/config.json"
+        "exp_pyl.json",
+        # "config.json"
     ],
     # "tokens": [
-    #     "configs/tokens/config.json"
+    #     "config_lstm.json"
     # ],
     # "letters": [
     #     "configs/letters/config.json"
@@ -100,7 +101,8 @@ def main(n_funs_per_split: int = 20, multiplier: int = 4, dataset_args: dict = d
                 config_json = json.load(f)
             weights_path = path.join("runs", config_path.replace(".json", ""), "models/best.pt")
 
-            encoder = get_model(config_json["encoder_type"], dataset, **config_json["encoder"])
+            encoder = get_model(config_json["encoder_type"], dataset, weights=weights_path, **config_json["encoder"])
+            encoder.eval()
 
             opt_thr, f1_opt, f1_std = calibrate_threshold(encoder, val_dataloaders, multiplier=multiplier)
 
@@ -122,4 +124,4 @@ if __name__ == "__main__":
         "mode": "triplets",
         "return_tensor": True
     }
-    results = main(n_funs_per_split=40, dataset_args=dataset_args_base)
+    results = main(n_funs_per_split=50, dataset_args=dataset_args_base)

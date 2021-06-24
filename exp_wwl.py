@@ -5,55 +5,40 @@ from multiprocessing import Pool
 import warnings
 warnings.filterwarnings("ignore")
 
-import torch
+import igraph as ig
 import numpy as np
 from tqdm import tqdm
 from sklearn.metrics import f1_score, roc_auc_score
-from torch_geometric.nn import WLConv
-from torch_geometric.data import Data, Batch
-from sklearn.preprocessing import OneHotEncoder
+from torch_geometric.data import Data
+from wwl import wwl
 
-from datasets.utils.graph_attrs import node_attrs
 from datasets.functions_dataset import FunctionsDataset
 
 
 RepresentationType = Union[Data]
 
 measures_args = {
-    "wlk": [1, 2, 3],
+    "wlk": [2, 3, 5, 9, 13, 17],
 }
 
-class WL(torch.nn.Module):
-    def __init__(self, num_layers):
-        super(WL, self).__init__()
-        self.convs = torch.nn.ModuleList([WLConv() for _ in range(num_layers)])
-        self.enc = OneHotEncoder(sparse=False)
-        self.enc.fit([[i] for i, label in enumerate(node_attrs)])
-
-    def forward(self, x, edge_index, batch=None):
-        hists = []
-        x = torch.tensor(self.enc.transform(x.numpy()))
-        for conv in self.convs:
-            x = conv(x, edge_index)
-            hists.append(conv.histogram(x, batch, norm=False))
-        return hists
-
+def pyg2ig(g: Data) -> ig.Graph:
+    ea = g.edge_attr.flatten().tolist()
+    ea = {"label": ea}
+    va = g.x.flatten().tolist()
+    va = {"label": va}
+    ei = g.edge_index.t().tolist()
+    return ig.Graph(edges=ei, edge_attrs=ea, vertex_attrs=va)
 
 class Worker:
     def __init__(self, num_iter):
         self.num_iter = num_iter
-        self.wl = WL(num_iter)
 
     def __call__(self, f1f2):
         f1, f2 = f1f2
-        data = Batch.from_data_list([f1, f2])
-        hists = self.wl(data.x, data.edge_index, data.batch)
-        sims = []
-        for hist in hists:
-            print(torch.min(hist, 0)[0])
-            sim = 1 - (torch.abs(hist[0] - hist[1]).sum() / (hist[0].sum() + hist[1].sum()))
-            sims.append(sim.item())
-        return np.mean(sims)
+        f1 = pyg2ig(f1)
+        f2 = pyg2ig(f2)
+        similarity = wwl([f1, f2], num_iterations=self.num_iter)
+        return similarity[0, 1]
 
 
 def prepare_dataset(val_dataset, multiplier=4):
@@ -103,7 +88,7 @@ def calibrate_threshold(num_iters, val_pairs, val_labels):
     return best_thr, best_f1, best_std
 
 
-def main(n_funs_per_split: int = 20, multiplier: int = 10, dataset_args: dict = dict()):
+def main(n_funs_per_split: int = 20, multiplier: int = 4, dataset_args: dict = dict()):
 
     assert dataset_args["mode"] == "triplets"
 
@@ -129,7 +114,7 @@ def main(n_funs_per_split: int = 20, multiplier: int = 10, dataset_args: dict = 
         opt_thr, f1_opt, f1_std = calibrate_threshold(num_iter, val_pairs, val_labels)
 
         partial_res = {
-            "measure": "wl",
+            "measure": "wlk",
             "num_iter": num_iter,
             "best_thr": opt_thr,
             "best_avg_f1": f1_opt,
@@ -147,7 +132,7 @@ if __name__ == "__main__":
         "root_dir": "data/graph_functions",
         "split_file": "val.txt",
         "mode": "triplets",
-        "format": "graph",
+        "format": "graph_directed",
         "return_tensor": True
     }
     results = main(n_funs_per_split=50, dataset_args=dataset_args_base)

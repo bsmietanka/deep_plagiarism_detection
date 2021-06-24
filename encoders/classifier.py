@@ -10,7 +10,13 @@ class Classifier(nn.Module):
 
         self.num_classes = num_classes
         self.encoder = encoder
-        self.classifier = nn.Linear(encoder.out_dim, num_classes)
+        in_features = encoder.out_dim * 4
+        self.classifier = nn.Sequential(
+            # nn.Dropout(),
+            nn.Linear(in_features, encoder.out_dim),
+            nn.ReLU(),
+            nn.Linear(encoder.out_dim, num_classes),
+        )
 
 
     def forward(self, x):
@@ -20,12 +26,12 @@ class Classifier(nn.Module):
     def classify_embs(self, *args):
         if len(args) == 2:
             x, y = args
-            diff = torch.abs(x - y)
+            features = torch.cat([x + y, torch.abs(x - y), x * y, (x - y) ** 2], dim=1)
 
             if self.num_classes == 1:
-                return torch.sigmoid(self.classifier(diff))
+                return torch.sigmoid(self.classifier(features))
             else:
-                return torch.log_softmax(self.classifier(diff), -1)
+                return torch.log_softmax(self.classifier(features), -1)
         elif len(args) == 1:
             x = args[0]
             if self.num_classes == 1:

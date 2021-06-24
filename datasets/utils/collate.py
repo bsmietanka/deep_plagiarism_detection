@@ -1,28 +1,15 @@
-from typing import List, Tuple, Union
+from typing import Tuple, Union
 
 from torch import Tensor, LongTensor
 from torch.utils.data.dataloader import default_collate
 from torch_geometric.data import Data
 from torch_geometric.data.batch import Batch
-from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence, pack_sequence, PackedSequence
-
-from datasets.utils.r_tokenizer import pad_idx
-
-# from datasets.utils.graph_attrs import node_attrs
+from torch.nn.utils.rnn import pack_sequence, PackedSequence
 
 TensorType = Union[Tensor, Data, PackedSequence]
 RepresentationType = Union[TensorType, Tuple[TensorType, ...]]
 
 class Collater:
-
-    @staticmethod
-    def _pack_sequences(sequences_batch: List[LongTensor]) -> PackedSequence:
-        seq_lengths = [len(seq) for seq in sequences_batch]
-        padded_seq = pad_sequence(sequences_batch, batch_first=True, padding_value=pad_idx)
-        packed_seq = pack_padded_sequence(padded_seq, seq_lengths,
-                                          batch_first=True, enforce_sorted=False)
-
-        return packed_seq
 
     def collate(self, batch) -> RepresentationType:
         elem = batch[0]

@@ -1,4 +1,3 @@
-from encoders.graph_encoder import GraphEncoder
 from typing import List, Optional, Union
 from pprint import pprint
 from utils.train_utils import create_triplet_dataset
@@ -46,18 +45,15 @@ def train_augs(model: Union[nn.Module, Classifier],
         optimizer.zero_grad()
 
         a = a.to(device)
-        a_emb= model(a)
-        del a
-        
         p = p.to(device)
-        p_emb = model(p)
+        a1_emb, p_emb = model(a, p)
         del p
 
         n = n.to(device)
-        n_emb = model(n)
-        del n
+        a2_emb, n_emb = model(a, n)
+        del a, n
 
-        embs = torch.cat((a_emb, p_emb, a_emb, n_emb), dim=0)
+        embs = torch.cat((a1_emb, p_emb, a2_emb, n_emb), dim=0)
         # labels = torch.cat(
         #     (
         #         torch.ones((2 * a1_emb.shape[0],)),
@@ -116,19 +112,18 @@ def val(model: Union[nn.Module, Classifier],
     for a, p, n, la, lp, ln in tqdm(val_loader, desc="Validation"):
         la, lp, ln = la.numpy(), lp.numpy(), ln.numpy()
         a = a.to(device)
-        a_emb = model(a).cpu().numpy()
-        del a
-        
         p = p.to(device)
-        p_emb = model(p).cpu().numpy()
+        a1_emb, p_emb = model(a, p)
+        a1_emb, p_emb = a1_emb.cpu().numpy(), p_emb.cpu().numpy()
         del p
 
         n = n.to(device)
-        n_emb = model(n).cpu().numpy()
-        del n
+        a2_emb, n_emb = model(a, n)
+        a2_emb, n_emb = a2_emb.cpu().numpy(), n_emb.cpu().numpy()
+        del a, n
 
-        embeddings.extend([a_emb, p_emb, a_emb, n_emb])
-        for i, e in enumerate([a_emb, p_emb, a_emb, n_emb]):
+        embeddings.extend([a1_emb, p_emb, a2_emb, n_emb])
+        for i, e in enumerate([a1_emb, p_emb, a2_emb, n_emb]):
             end = start + e.shape[0]
             indices[i].append(np.arange(start, end))
             start = end
@@ -169,7 +164,7 @@ def main():
     train_dataset = FunctionsDataset("data/graph_functions", "train.txt", "singles", "graph", cache="data/cache")
     val_dataset = FunctionsDataset("data/graph_functions", "val.txt", "singles", "graph", cache="data/cache")
 
-    encoder = Classifier(GraphEncoder(1, 256, train_dataset.num_tokens, 4, 4))
+    encoder = GraphMatchingNetwork(train_dataset.num_tokens, 4, [256, 256, 256, 256])
     encoder.to(device)
 
     train_triplets = torch.tensor(samplers.FixedSetOfTriplets(train_dataset.labels, 5000 * 50).fixed_set_of_triplets)
@@ -177,7 +172,7 @@ def main():
     val_triplets = torch.tensor(samplers.FixedSetOfTriplets(val_dataset.labels, 10**4).fixed_set_of_triplets)
     val_dataset = create_triplet_dataset(val_dataset, val_triplets)
 
-    train_loader = DataLoader(train_dataset, num_workers=12, pin_memory=True, collate_fn=Collater(), sampler=RandomSampler(train_dataset, replacement=True, num_samples=20000), batch_size=batch_size)
+    train_loader = DataLoader(train_dataset, num_workers=12, pin_memory=True, collate_fn=Collater(), sampler=RandomSampler(train_dataset, replacement=True, num_samples=5000), batch_size=batch_size)
     val_loader = DataLoader(val_dataset, num_workers=20, pin_memory=True, collate_fn=Collater(), batch_size=batch_size)
 
     # Set optimizers
@@ -191,7 +186,7 @@ def main():
 
     lr_scheduler = ReduceLROnPlateau(optimizer, mode="min", factor=0.1, patience=5, verbose=True)
 
-    best_acc = float('inf')
+    best_acc = 0.
     no_improvement_since = 0
     for epoch in range(1, epochs + 1):
         print(f"EPOCH #{epoch} (BEST ACC = {best_acc})")
@@ -201,11 +196,10 @@ def main():
 
         accuracies = val(encoder, val_loader, accuracy_calculator, device, loss_func)
         lr_scheduler.step(accuracies["loss"])
-        acc = accuracies['loss']
-        if acc < best_acc:
+        acc = accuracies['mean_average_precision_at_r']
+        if acc > best_acc:
             best_acc = acc
             no_improvement_since = 0
-            torch.save(encoder.state_dict(), "exp_cont_best.pt")
         else:
             no_improvement_since += 1
 

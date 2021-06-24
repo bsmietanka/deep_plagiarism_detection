@@ -17,13 +17,13 @@ MeasureType = Callable[[RepresentationType, RepresentationType], float]
 
 
 measures_by_format = {
-    # "tokens": [
-    #     "edit",
-    #     "gst"
-    #     ],
+    "tokens": [
+        "edit",
+        "gst"
+        ],
     "graph": [
-        # "graph_edit",
-        # "lambda",
+        "graph_edit",
+        "lambda",
         "wlk"
         ]
     }
@@ -35,7 +35,7 @@ root_dir_for_formats = {
 
 measures_args = {
     "edit": [{}],
-    "gst": [{"min_len": val} for val in range(3, 20, 2)],
+    "gst": [{"min_len": val} for val in [3, 5, 7, 9, 13, 17, 20]],
     "graph_edit": [{}],
     "lambda": [{"k": val} for val in [10, 30, 100, None]],
     "wlk": [{"h": val} for val in [5, 9, 13, 20]],

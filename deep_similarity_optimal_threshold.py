@@ -20,11 +20,13 @@ MeasureType = Callable[[RepresentationType, RepresentationType], float]
 
 configs_by_format = {
     "graph": [
+    #     # "exp_pyl.json",
+    #     # "exp_cont.json",
         "config.json"
     ],
-    # "tokens": [
-    #     "configs/tokens/config.json"
-    # ],
+    "tokens": [
+        "config_lstm.json"
+    ],
     # "letters": [
     #     "configs/letters/config.json"
     # ]

@@ -39,9 +39,9 @@ def worker(src_file: str):
             edge_attrs.add(tp)
     return node_attrs, edge_attrs
 
-data_root = "data/graph_functions/"
+data_root = "/media/hdd1/bsmietanka/thesis/data/graph_functions/"
 src_files = glob(path.join(data_root, "**/*.R.txt"), recursive=True)
-with Pool(6) as p:
+with Pool() as p:
     res = list(tqdm(p.imap(worker, src_files), total=len(src_files)))
 
 node_attrs = set()

@@ -4,6 +4,7 @@ from os import makedirs, path
 from shutil import copyfile
 from typing import List, Optional, Union
 from pprint import pprint
+from numpy.core.numeric import indices
 
 from torch.optim import lr_scheduler
 from utils.train_utils import get_model
@@ -30,7 +31,9 @@ from datasets.functions_dataset import FunctionsDataset
 from encoders.classifier import Classifier
 from utils.measure_performance import measure
 
+from pytorch_lightning import seed_everything
 
+seed_everything(42)
 
 # TODO: singles dataset, calculate embeddings, mine hard triplets, classification train on hard triplets
 
@@ -70,55 +73,58 @@ def train_augs(model: Union[nn.Module, Classifier],
 
         with measure.block("sample_encoding"):
             samples = samples.to(device)
-            embeddings = model(samples).cpu()
+            embeddings = model(samples)
             del samples
 
         with measure.block("sample_encoding"):
             aug_samples = aug_samples.to(device)
-            aug_embeddings = model(aug_samples).cpu()
+            aug_embeddings = model(aug_samples)
             del aug_samples
 
-        accumulated_embeddings.extend([embeddings, aug_embeddings])
-        accumulated_labels.extend([labels1, labels2])
+        # accumulated_embeddings.extend([embeddings, aug_embeddings])
+        # accumulated_labels.extend([labels1, labels2])
 
-        if (batch_idx + 1) % accumulation_steps == 0 or (batch_idx + 1) == len(train_loader):
-            embeddings = torch.cat(accumulated_embeddings, dim=0)
-            labels = torch.cat(accumulated_labels, dim=0)
-            accumulated_embeddings.clear()
-            accumulated_labels.clear()
+        # if (batch_idx + 1) % accumulation_steps == 0 or (batch_idx + 1) == len(train_loader):
+        #     embeddings = torch.cat(accumulated_embeddings, dim=0).cuda()
+        #     labels = torch.cat(accumulated_labels, dim=0).cuda()
+        #     accumulated_embeddings.clear()
+        #     accumulated_labels.clear()
 
-        # embeddings = torch.cat([embeddings, aug_embeddings], dim=0)
-        # labels = torch.cat([labels, labels], dim=0)
+        embeddings = torch.cat([embeddings, aug_embeddings], dim=0)
+        # print(embeddings)
+        labels = torch.cat([labels1, labels2], dim=0)
 
-            indices_tuple = miner(embeddings, labels)
+        indices_tuple = miner(embeddings, labels)
+        # print(indices_tuple)
+        # print(labels)
 
-            emb_loss = loss_fun(embeddings, labels, indices_tuple)
+        emb_loss = loss_fun(embeddings, labels, indices_tuple)
 
-            if classification:
-                a = embeddings[indices_tuple[0]].to(device)
-                p = embeddings[indices_tuple[1]].to(device)
-                n = embeddings[indices_tuple[2]].to(device)
-                pred_p = model.classify_embs(a, p)
-                pred_n = model.classify_embs(a, n)
-                cls_loss_fun = nn.BCELoss()
-                cls_loss = cls_loss_fun(torch.cat([pred_p, pred_n], dim=0), torch.cat([torch.ones_like(pred_p), torch.zeros_like(pred_n)], dim=0))
-                loss = cls_loss + emb_loss
-            else:
-                loss = emb_loss
-            del embeddings
-            del labels
-            loss.backward()
-            optimizer.step()
-            optimizer.zero_grad()
+        if classification:
+            a = embeddings[indices_tuple[0]].to(device)
+            p = embeddings[indices_tuple[1]].to(device)
+            n = embeddings[indices_tuple[2]].to(device)
+            pred_p = model.classify_embs(a, p)
+            pred_n = model.classify_embs(a, n)
+            cls_loss_fun = nn.BCELoss()
+            cls_loss = cls_loss_fun(torch.cat([pred_p, pred_n], dim=0), torch.cat([torch.ones_like(pred_p), torch.zeros_like(pred_n)], dim=0))
+            loss = cls_loss # + emb_loss
+        else:
+            loss = emb_loss
+        del embeddings
+        del labels
+        loss.backward()
+        optimizer.step()
+        optimizer.zero_grad()
 
-            epoch_loss += loss.item()
-            running_loss += loss.item()
-            mined_triplets += miner.num_triplets
+        epoch_loss += loss.item()
+        running_loss += loss.item()
+        mined_triplets += miner.num_triplets
 
-        if batch_idx % update_interval == 0:
-            running_loss /= n_accumulations
-            pbar.set_postfix_str(f"Avg loss = {running_loss}, # mined triplets = {mined_triplets}")
-            running_loss = 0.
+        # if batch_idx % update_interval == 0:
+        running_loss /= n_accumulations
+        pbar.set_postfix_str(f"Avg loss = {running_loss}, # mined triplets = {mined_triplets}")
+        running_loss = 0.
 
     epoch_loss /= len(train_loader)
     print(f"Epoch loss = {epoch_loss}")
@@ -175,7 +181,7 @@ def val(model: Union[nn.Module, Classifier],
     a = triplets[:, 0]
     p = triplets[:, 1]
     n = triplets[:, 2]
-    accuracies["loss"] = loss_fn(torch.tensor(embeddings), torch.tensor(labels), (a, p, a, n)).item()
+    accuracies["emb_loss"] = loss_fn(torch.tensor(embeddings), torch.tensor(labels), (a, p, a, n)).item()
 
     if classification:
         embeddings = torch.tensor(embeddings)
@@ -200,6 +206,9 @@ def val(model: Union[nn.Module, Classifier],
         pred = prob > 0.5
         accuracies["accuracy"] = accuracy_score(pred, y_true)
         accuracies["f1_score"] = f1_score(pred, y_true)
+        accuracies["cls_loss"] = nn.BCELoss()(torch.tensor(prob), torch.tensor(y_true)).item()
+
+    accuracies["loss"] = accuracies["emb_loss"] + accuracies.get("cls_loss", 0)
 
     return accuracies, embeddings, labels
 
@@ -289,14 +298,17 @@ def main(config_path):
     # distance = distances.LpDistance()
     distance = distances.CosineSimilarity()
     # TODO?: Try other losses, eg. ContrastiveLoss
-    loss_func = losses.TripletMarginLoss(margin=0.2, distance=distance, embedding_regularizer=regularizers.LpRegularizer())
+    loss_func = losses.TripletMarginLoss(margin=0.5)
+    # loss_func = losses.ContrastiveLoss(pos_margin=1., neg_margin=0., distance=distance)
+    # loss_func = losses.TupletMarginLoss(embedding_regularizer=regularizers.LpRegularizer())
+    # loss_func = losses.MultiSimilarityLoss(embedding_regularizer=regularizers.LpRegularizer())
 
-    miner = miners.TripletMarginMiner(type_of_triplets="all", distance=distance)
+    miner = miners.TripletMarginMiner(type_of_triplets="all")
 
     accuracy_calculator = AccuracyCalculator(include=("mean_average_precision_at_r",))
 
     lr_scheduler = ReduceLROnPlateau(optimizer, mode="min", factor=0.1, patience=5, verbose=True)
-    best_acc = 0.
+    best_acc = float('inf')
     no_improvement_since = 0
     best_weights_path = ""
     for epoch in range(1, epochs + 1):
@@ -308,10 +320,10 @@ def main(config_path):
 
         accuracies, embs, labels = val(encoder, val_loader, accuracy_calculator, device, loss_func, classification=classification, **params["val"])
         lr_scheduler.step(accuracies["loss"])
-        acc = accuracies['mean_average_precision_at_r']
+        acc = accuracies['loss']
         if classification:
-            acc = accuracies["accuracy"]
-        if acc > best_acc:
+            acc = -accuracies["f1_score"]
+        if acc < best_acc:
             best_acc = acc
             no_improvement_since = 0
             weights_filename = f"model_{epoch}.pt"
@@ -321,6 +333,7 @@ def main(config_path):
             no_improvement_since += 1
 
         tb_writer.add_scalar("MAP@R/Val", accuracies['mean_average_precision_at_r'], epoch)
+        tb_writer.add_scalar("Loss/Val", accuracies['loss'], epoch)
         if classification:
             tb_writer.add_scalar("F1/Val", accuracies['f1_score'], epoch)
             tb_writer.add_scalar("Accuracy/Val", accuracies['accuracy'], epoch)

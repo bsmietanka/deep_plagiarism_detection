@@ -26,6 +26,7 @@ def get_model(model_type: str, dataset: FunctionsDataset, num_classes: int = 1, 
         raise ValueError("Unsupported encoder type")
 
     if weights is not None:
+        print(weights)
         encoder.load_state_dict(torch.load(weights))
 
     encoder.to(device)
@@ -72,11 +73,11 @@ def create_triplet_dataset(dataset: FunctionsDataset, triplets: Tensor):
             triplet = self.triplets[index, :].flatten()
             assert triplet.shape == (3,)
 
-            a, *_ = self.original_dataset[triplet[0]]
-            p, *_ = self.original_dataset[triplet[1]]
-            n, *_ = self.original_dataset[triplet[2]]
+            a, la, pa = self.original_dataset[triplet[0]]
+            p, lp, pp = self.original_dataset[triplet[1]]
+            n, ln, pn = self.original_dataset[triplet[2]]
 
-            return a, p, n
+            return a, p, n, la, lp, ln
 
     return TripletDataset(dataset, triplets)
 

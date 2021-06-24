@@ -13,7 +13,7 @@ from tqdm import tqdm
 from numba import jit
 from sklearn.metrics import accuracy_score, f1_score
 
-from encoders import SiameseClassifier
+from encoders import Classifier
 from datasets.utils.collate import Collater
 from datasets.functions_dataset import FunctionsDataset
 from utils.measure_performance import measure
@@ -21,7 +21,7 @@ from utils.train_utils import create_pairs_dataset, get_embeddings, get_model, p
 
 
 
-def train_epoch(model: SiameseClassifier,
+def train_epoch(model: Classifier,
                 loss_fun: nn.Module,
                 pair_loader: DataLoader,
                 optimizer: optim.Optimizer,
@@ -58,7 +58,7 @@ def is_sorted(a: np.ndarray):
 cache = dict()
 
 @torch.no_grad()
-def val_epoch(model: SiameseClassifier,
+def val_epoch(model: Classifier,
               val_loader: DataLoader,
               accuracy_calculator: AccuracyCalculator,
               device: str):
@@ -118,12 +118,12 @@ def main():
     batch_size = 256
     model_type = "gnn"
     model_params = {
-        "hidden_dims": [8, 24, 64, 128, 256],
-        "num_node_embeddings": 4,
-        "layer_type": "gcn",
-        "post_mp_dim": None
+        "hidden_dim": 256,
+        "num_layers": 4,
+        "input_dim": 1,
+        "node_embeddings": 4
     }
-    lr = 1e-4
+    lr = 1e-3
     weight_decay = 1e-6
     patience = 5
 
@@ -132,17 +132,17 @@ def main():
     concat_dataset = ConcatDataset([train_dataset for i in range(multiplier)])
     val_dataset = FunctionsDataset("data/graph_functions/", "val.txt", "singles", "graph", cache="data/cache")
     train_sampler = samplers.MPerClassSampler(train_dataset.labels, 4, batch_size)
-    train_loader = DataLoader(concat_dataset, num_workers=6, pin_memory=True, collate_fn=Collater(), sampler=train_sampler, batch_size=batch_size)
-    val_loader = DataLoader(val_dataset, num_workers=6, pin_memory=True, collate_fn=Collater(), batch_size=batch_size)
+    train_loader = DataLoader(concat_dataset, num_workers=12, pin_memory=True, collate_fn=Collater(), sampler=train_sampler, batch_size=batch_size)
+    val_loader = DataLoader(val_dataset, num_workers=12, pin_memory=True, collate_fn=Collater(), batch_size=batch_size)
 
     # model, optimizer, loss
-    model = get_model(model_type, train_dataset, device, **model_params)
+    model = get_model(model_type, train_dataset, 1, device, **model_params)
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     loss_fn = nn.BCELoss()
 
     # metric learning stuff
     distance = distances.CosineSimilarity()
-    miner = miners.TripletMarginMiner(distance=distance, type_of_triplets="hard")
+    miner = miners.TripletMarginMiner(margin=0.2, distance=distance, type_of_triplets="hard")
     acc_calc = AccuracyCalculator()
 
     best_acc = 0.
@@ -170,6 +170,7 @@ def main():
         if acc > best_acc:
             best_acc = acc
             no_improvement_since = 0
+            torch.save(model.state_dict(), "exp_mining.pt")
         else:
             no_improvement_since += 1
         pprint(accuracies)
