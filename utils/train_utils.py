@@ -1,4 +1,6 @@
 from typing import Optional, Tuple
+from functools import lru_cache
+from pytorch_metric_learning import samplers
 
 import torch
 from torch import Tensor
@@ -8,29 +10,33 @@ from torch.utils.data.dataset import Dataset
 from tqdm import tqdm
 
 from datasets.functions_dataset import FunctionsDataset, RepresentationType
-from encoders import Classifier, LSTMEncoder, TransformerEncoder, GraphEncoder
+from encoders import LSTMEncoder, TransformerEncoder, GraphEncoder
 
 
-def get_model(model_type: str, dataset: FunctionsDataset, num_classes: int = 1, device: str = "cuda:0", weights: Optional[str] = None, **kwargs):
+def get_model(model_type: str, num_tokens: int, device: str = "cuda:0", weights: Optional[str] = None, **kwargs):
     model_type = model_type.lower()
     if model_type == "lstm":
-        assert not dataset.graph
-        encoder = Classifier(LSTMEncoder(**kwargs, vocab_size=dataset.num_tokens), num_classes)
+        encoder = LSTMEncoder(**kwargs, vocab_size=num_tokens)
     elif model_type == "transformer":
-        assert not dataset.graph
-        encoder = Classifier(TransformerEncoder(**kwargs, vocab_size=dataset.num_tokens), num_classes)
+        encoder = TransformerEncoder(**kwargs, vocab_size=num_tokens)
     elif model_type == "gnn":
-        assert dataset.graph
-        encoder = Classifier(GraphEncoder(**kwargs, node_labels=dataset.num_tokens), num_classes)
+        encoder = GraphEncoder(**kwargs, node_labels=num_tokens)
     else:
         raise ValueError("Unsupported encoder type")
 
     if weights is not None:
-        print(weights)
+        print("Loading:", weights)
         encoder.load_state_dict(torch.load(weights))
 
     encoder.to(device)
     return encoder
+
+
+
+@lru_cache
+def n_triplet_dataset(dataset: FunctionsDataset, n_triplets: int):
+    triplets = torch.tensor(samplers.FixedSetOfTriplets(dataset.labels, n_triplets).fixed_set_of_triplets)
+    return create_triplet_dataset(dataset, triplets)
 
 
 def create_pairs_dataset(dataset: FunctionsDataset, pairs: Tensor):

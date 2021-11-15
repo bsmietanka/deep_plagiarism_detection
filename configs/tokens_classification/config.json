@@ -1,0 +1,16 @@
+{
+  "batch_size": 20,
+  "epochs": 100,
+  "device": "cuda",
+  "patience": 10,
+  "lr": 1e-3,
+  "data_root": "data/functions",
+  "val_subset": 0,
+  "format": "tokens",
+  "loss_func": "contrastive",
+  "model_params": {
+    "embedding_dim": 8,
+    "hidden_dim": 256,
+    "num_layers": 1
+  }
+}

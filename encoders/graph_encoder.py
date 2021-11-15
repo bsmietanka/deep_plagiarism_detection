@@ -5,61 +5,55 @@ from torch import Tensor
 from torch import nn
 from torch.nn import Linear, Sequential, ReLU, BatchNorm1d as BN
 from torch_geometric.data import Batch
-from torch_geometric.nn import GINConv, global_mean_pool
+from torch_geometric.nn import GINConv, global_mean_pool, GATv2Conv
 
-
+def make_layer(in_features, out_features, type):
+    if type == "gat":
+        return GATv2Conv(in_features, out_features)
+    else:
+        return GINConv(
+            Sequential(
+                Linear(in_features, out_features),
+                ReLU(),
+                Linear(out_features, out_features),
+                ReLU(),
+                BN(out_features),
+            ), train_eps=True
+        )
 
 class GIN0(nn.Module):
-    def __init__(self, node_features: int, hidden_dim: int, num_layers: int = 5, train_eps: bool = False):
+    def __init__(self, node_features: int, hidden_dim: int, num_layers: int = 5, layer_type: str = "gin", residual: bool = True):
         super().__init__()
-        self.conv1 = GINConv(
-            Sequential(
-                Linear(node_features, hidden_dim),
-                ReLU(),
-                Linear(hidden_dim, hidden_dim),
-                ReLU(),
-                BN(hidden_dim),
-            ), train_eps=train_eps)
+        self.conv1 = make_layer(node_features, hidden_dim, layer_type)
+
         self.convs = nn.ModuleList()
         for i in range(num_layers - 1):
-            self.convs.append(
-                GINConv(
-                    Sequential(
-                        Linear(hidden_dim, hidden_dim),
-                        ReLU(),
-                        Linear(hidden_dim, hidden_dim),
-                        ReLU(),
-                        BN(hidden_dim),
-                    ), train_eps=train_eps))
-        self.lins = nn.ModuleList()
-        # for i in range(num_layers):
-        for i in range(1):
-            self.lins.append(nn.Sequential(Linear(hidden_dim, hidden_dim), nn.Tanh()))
-        # self.lin1 = Linear(hidden_dim, hidden_dim)
+            self.convs.append(make_layer(hidden_dim, hidden_dim, layer_type))
+        self.relu = nn.ReLU()
+        self.residual = residual
+
+        self.lin = nn.Sequential(
+            Linear(hidden_dim, hidden_dim),
+            nn.Tanh()
+            )
 
 
     def reset_parameters(self):
         self.conv1.reset_parameters()
         for conv in self.convs:
             conv.reset_parameters()
-        # self.lin1.reset_parameters()
-        for lin in self.lins:
-            lin.reset_parameters()
+        self.lin.reset_parameters()
+
 
     def forward(self, x: Tensor, edge_index: Tensor, batch: Tensor):
-        # embs = []
         x = self.conv1(x, edge_index)
-        # embs.append(global_mean_pool(self.lins[0](x), batch))
-        for i, conv in enumerate(self.convs):
-            new_x = conv(x, edge_index)
-            x = x + new_x
-            # embs.append(global_mean_pool(self.lins[i + 1](x), batch))
-        return global_mean_pool(self.lins[-1](x), batch)
-        # return torch.cat(embs, dim=1)
-        # return embs[-1]
-
-    def __repr__(self):
-        return self.__class__.__name__
+        for conv in self.convs:
+            new_x = self.relu(conv(x, edge_index))
+            if self.residual:
+                x = x + new_x
+            else:
+                x = new_x
+        return global_mean_pool(self.lin(x), batch)
 
 
 class GraphEncoder(nn.Module):
@@ -69,9 +63,9 @@ class GraphEncoder(nn.Module):
                  node_labels: int = -1,
                  num_layers: int = 5,
                  node_embeddings: Optional[int] = None,
-                 train_eps: bool = False):
+                 layer_type: str = "gin",
+                 residual: bool = True):
         super().__init__()
-        # self.out_dim = hidden_dim
 
         if node_embeddings is not None:
             self.node_embeddings = nn.Embedding(node_labels, embedding_dim=node_embeddings)
@@ -79,8 +73,8 @@ class GraphEncoder(nn.Module):
             self.node_embeddings = nn.Identity()
 
         node_features = node_embeddings if node_embeddings is not None else input_dim
-        self.model = GIN0(node_features, hidden_dim, num_layers, train_eps)
-        self.out_dim = len(self.model.lins) * hidden_dim
+        self.model = GIN0(node_features, hidden_dim, num_layers, layer_type, residual)
+        self.out_dim = hidden_dim
 
 
     def forward(self, data: Batch) -> torch.FloatTensor:

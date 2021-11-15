@@ -1,9 +1,8 @@
 
-from encoders.graph_encoder import GraphEncoder
-from encoders.lstm_encoder import LSTMEncoder
+import json
 from typing import Union
 from pprint import pprint
-from utils.train_utils import create_triplet_dataset
+from utils.train_utils import create_triplet_dataset, get_model, n_triplet_dataset
 
 
 import torch
@@ -77,39 +76,48 @@ def val_epoch(model: Union[nn.Module, Classifier],
         labels = torch.cat([torch.ones_like(pos), torch.zeros_like(neg)], dim=0)
         total_loss += loss_fn(probs, labels).item() * 2 * pos.shape[0]
 
-    accuracies = {}
-    accuracies["loss"] = total_loss / total
-    accuracies["accuracy"] = correct / total
+    metrics = {}
+    metrics["loss"] = total_loss / total
+    metrics["accuracy"] = correct / total
 
-    return accuracies
+    return metrics
 
 
-def main():
+def main(config_path):
 
-    batch_size = 128
-    epochs = 100
-    device = "cuda:0"
-    patience = 20
-    lr = 1e-3
+    with open(config_path) as f:
+        config = json.load(f)
 
-    train_dataset = FunctionsDataset("data/graph_functions", "train.txt", "singles", "graph")
+    # training params
+    batch_size = config["batch_size"]
+    epochs = config["epochs"]
+    device = config["device"]
+    patience = config["patience"]
+    lr = config["lr"]
+
+    # dataset params
+    data_root = config.get("data_root", "data/graph_functions")
+    val_subset = config.get("val_subset", 0)
+    inp_format = config.get("format", "graph_directed")
+
+    # model params
+    if inp_format == "tokens":
+        model_type = "lstm"
+    else:
+        model_type = "gnn"
+
+    train_dataset = FunctionsDataset(data_root, "train.txt", "singles", inp_format, cache="data/cache")
+    val_dataset = FunctionsDataset(data_root, "val.txt", "singles", inp_format, val_subset, cache="data/cache")
     num_tokens = train_dataset.num_tokens
-    val_dataset = FunctionsDataset("data/graph_functions", "val.txt", "singles", "graph")
 
-
-    train_triplets = torch.tensor(samplers.FixedSetOfTriplets(train_dataset.labels, 10000 * 50).fixed_set_of_triplets)
-    train_dataset = create_triplet_dataset(train_dataset, train_triplets)
-    val_triplets = torch.tensor(samplers.FixedSetOfTriplets(val_dataset.labels, 10**4).fixed_set_of_triplets)
-    val_dataset = create_triplet_dataset(val_dataset, val_triplets)
-
-    # train_triplets = torch.tensor(samplers.FixedSetOfTriplets(train_dataset.labels, batch_size).fixed_set_of_triplets)
-    # train_dataset = create_triplet_dataset(train_dataset, train_triplets)
-    # val_dataset = train_dataset
+    train_dataset = n_triplet_dataset(train_dataset, 100000)
+    val_dataset = n_triplet_dataset(val_dataset, 10000)
 
     train_loader = DataLoader(train_dataset, num_workers=16, pin_memory=True, collate_fn=Collater(), sampler=RandomSampler(train_dataset, replacement=True, num_samples=20000), batch_size=batch_size)
     val_loader = DataLoader(val_dataset, num_workers=16, pin_memory=True, collate_fn=Collater(), batch_size=batch_size)
 
-    encoder = Classifier(GraphEncoder(1, 512, node_labels=num_tokens, num_layers=5, node_embeddings=5, train_eps=False))
+    
+    encoder = Classifier(get_model(model_type, num_tokens, **config["model_params"]))
     encoder.to(device)
     # Set optimizers
     optimizer = optim.Adam(encoder.parameters(), lr=lr)
@@ -117,32 +125,33 @@ def main():
     lr_scheduler = ReduceLROnPlateau(optimizer, mode="min", factor=0.1, patience=10, verbose=True)
     loss_func = nn.BCELoss()
 
-    best_acc = float('inf')
+    best_metrics = {"loss": float('inf')}
     no_improvement_since = 0
     for epoch in range(1, epochs + 1):
-        print(f"EPOCH #{epoch} (BEST ACC = {best_acc})")
+        print(f"EPOCH #{epoch} (BEST LOSS = {best_metrics['loss']})")
 
-        loss = train_epoch(encoder, train_loader, loss_func, optimizer, device)
-        print("TRAIN LOSS:", loss)
+        train_epoch(encoder, train_loader, loss_func, optimizer, device)
         # LR scheduler step val loss
 
-        accuracies = val_epoch(encoder, val_loader, loss_func, device)
-        lr_scheduler.step(accuracies["loss"])
-        acc = accuracies['loss']
-        if acc < best_acc:
-            best_acc = acc
+        metrics = val_epoch(encoder, val_loader, loss_func, device)
+        lr_scheduler.step(metrics["loss"])
+        if metrics['loss'] < best_metrics['loss']:
+            best_metrics = metrics
             no_improvement_since = 0
-            torch.save(encoder.state_dict(), "exp_graph_best.pt")
+            torch.save(encoder.state_dict(), config_path.replace(".json", ".pt"))
         else:
             no_improvement_since += 1
 
-        pprint(accuracies)
+        pprint(metrics)
 
         if no_improvement_since > patience:
             break
 
-    print("BEST ACC:", best_acc)
+    print("BEST LOSS:", best_metrics["loss"])
+    with open(config_path.replace(".json", "_metrics.json"), "w") as f:
+        json.dump(best_metrics, f)
+    return best_metrics
 
 
 if __name__ == '__main__':
-    main()
+    loss = main("configs/graphs/config.json")

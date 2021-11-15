@@ -3,7 +3,7 @@
   "epochs": 100,
   "device": "cuda:0",
   "patience": 20,
-  "classification": false,
+  "classification": true,
   "dataset": {
     "root_dir": "data/graph_functions/",
     "format": "graph",
@@ -22,7 +22,7 @@
   "encoder_type": "gnn",
   "encoder": {
     "input_dim": 1,
-    "node_embeddings": 4,
+    "node_embeddings": 5,
     "hidden_dim": 512,
     "num_layers": 5
   },

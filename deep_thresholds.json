@@ -1,0 +1,16 @@
+[
+    {
+        "measure": "deep_similarity",
+        "args": "config.json",
+        "best_thr": 0.811,
+        "best_avg_f1": 0.9408502689272538,
+        "f1_std": 0.035855571449351885
+    },
+    {
+        "measure": "deep_similarity",
+        "args": "config_lstm.json",
+        "best_thr": 0.996,
+        "best_avg_f1": 0.9465644717359021,
+        "f1_std": 0.03436012509040647
+    }
+]

@@ -7,7 +7,7 @@ scipy
 seaborn
 sklearn
 torch
-rpy2
+# rpy2
 tqdm
 tensorboard
 # torch-scatter
