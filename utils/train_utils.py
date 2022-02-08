@@ -13,14 +13,14 @@ from datasets.functions_dataset import FunctionsDataset, RepresentationType
 from encoders import LSTMEncoder, TransformerEncoder, GraphEncoder
 
 
-def get_model(model_type: str, num_tokens: int, device: str = "cuda:0", weights: Optional[str] = None, **kwargs):
+def get_model(model_type: str, device: str = "cpu", weights: Optional[str] = None, **kwargs):
     model_type = model_type.lower()
     if model_type == "lstm":
-        encoder = LSTMEncoder(**kwargs, vocab_size=num_tokens)
+        encoder = LSTMEncoder(**kwargs)
     elif model_type == "transformer":
-        encoder = TransformerEncoder(**kwargs, vocab_size=num_tokens)
+        encoder = TransformerEncoder(**kwargs)
     elif model_type == "gnn":
-        encoder = GraphEncoder(**kwargs, node_labels=num_tokens)
+        encoder = GraphEncoder(**kwargs)
     else:
         raise ValueError("Unsupported encoder type")
 
@@ -79,9 +79,9 @@ def create_triplet_dataset(dataset: FunctionsDataset, triplets: Tensor):
             triplet = self.triplets[index, :].flatten()
             assert triplet.shape == (3,)
 
-            a, la, pa = self.original_dataset[triplet[0]]
-            p, lp, pp = self.original_dataset[triplet[1]]
-            n, ln, pn = self.original_dataset[triplet[2]]
+            a, la, pa = self.original_dataset[triplet[0].item()]
+            p, lp, pp = self.original_dataset[triplet[1].item()]
+            n, ln, pn = self.original_dataset[triplet[2].item()]
 
             return a, p, n, la, lp, ln
 

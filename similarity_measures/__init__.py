@@ -1,6 +1,0 @@
-from similarity_measures.edit_similarity import EditSimilarity
-from similarity_measures.graph_edit_similarity import GraphEditSimilarity
-from similarity_measures.gst_similarity import GSTSimilarity
-from similarity_measures.lambda_similarity import LambdaSimilarity
-from similarity_measures.weisfeiler_lehman_similarity import WeisfeilerLehmanSimilarity
-from similarity_measures.deep_similarity import DeepSimilarity

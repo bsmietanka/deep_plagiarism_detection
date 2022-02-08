@@ -11,12 +11,14 @@ RepresentationType = Union[TensorType, Tuple[TensorType, ...]]
 
 class Collater:
 
-    def collate(self, batch) -> RepresentationType:
+    def collate(self, batch: list) -> RepresentationType:
         elem = batch[0]
         if isinstance(elem, Data):
             return Batch.from_data_list(batch)
         elif isinstance(elem, LongTensor):
             return pack_sequence(batch, enforce_sorted=False)
+        elif isinstance(elem, list):
+            return batch
         elif isinstance(elem, tuple):
             tuple_of_lists = tuple(map(list, zip(*batch)))
             return tuple(self.collate(batch_item) for batch_item in tuple_of_lists)

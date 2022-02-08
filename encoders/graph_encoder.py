@@ -1,9 +1,7 @@
-from typing import Optional, Sequence, Union
-
 import torch
 from torch import Tensor
 from torch import nn
-from torch.nn import Linear, Sequential, ReLU, BatchNorm1d as BN
+from torch.nn import Linear, Sequential, ReLU, BatchNorm1d as BN, functional as F
 from torch_geometric.data import Batch
 from torch_geometric.nn import GINConv, global_mean_pool, GATv2Conv
 
@@ -58,23 +56,25 @@ class GIN0(nn.Module):
 
 class GraphEncoder(nn.Module):
     def __init__(self,
-                 input_dim: int,
+                 num_tokens: int,
+                 embedding_dim: int,
                  hidden_dim: int,
-                 node_labels: int = -1,
                  num_layers: int = 5,
-                 node_embeddings: Optional[int] = None,
                  layer_type: str = "gin",
                  residual: bool = True):
         super().__init__()
 
-        if node_embeddings is not None:
-            self.node_embeddings = nn.Embedding(node_labels, embedding_dim=node_embeddings)
-        else:
-            self.node_embeddings = nn.Identity()
-
-        node_features = node_embeddings if node_embeddings is not None else input_dim
-        self.model = GIN0(node_features, hidden_dim, num_layers, layer_type, residual)
+        self.node_embeddings = nn.Embedding(num_tokens, embedding_dim=embedding_dim)
+        self.model = GIN0(embedding_dim, hidden_dim, num_layers, layer_type, residual)
         self.out_dim = hidden_dim
+        self.mlp = nn.Sequential(
+            nn.BatchNorm1d(hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.Hardtanh(),
+        )
 
 
     def forward(self, data: Batch) -> torch.FloatTensor:
@@ -84,4 +84,4 @@ class GraphEncoder(nn.Module):
 
         x = self.model(x, data.edge_index, data.batch)
 
-        return x
+        return self.mlp(x)

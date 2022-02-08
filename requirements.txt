@@ -23,10 +23,10 @@ networkx
 # baselines
 python-igraph
 wwl
-netcomp
 edit-distance
 git+https://github.com/rvsia/scored-greedy-string-tiling
 git+https://github.com/bsmietanka/GMatch4py
+git+https://github.com/apluslms/greedy-string-tiling.git
 
 # OPTIONAL
 ipython

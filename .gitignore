@@ -1,5 +1,17 @@
 data
+
 __pycache__/
 venv/
 .vscode/
 runs/
+graphs/
+lightning_logs/
+best/
+
+*.pt
+*.pkl
+*.csv
+*.out
+*.txt
+
+core

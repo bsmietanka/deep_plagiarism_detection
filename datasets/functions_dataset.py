@@ -1,4 +1,5 @@
 from os import makedirs, path, listdir
+import pickle
 from typing import Dict, List, Optional, Tuple, Union, Set
 import random
 from collections import defaultdict
@@ -6,16 +7,17 @@ from collections import defaultdict
 import torch
 from torch import LongTensor, FloatTensor
 from torch.utils import data
-from torch_geometric.data import Data as geoData
-from torch_geometric.utils.loop import remove_self_loops
 from tqdm import tqdm
 from networkx import Graph
-from torch_geometric.utils import to_networkx
-
+try:
+    from torch_geometric.utils.loop import remove_self_loops
+    from torch_geometric.data import Data as geoData
+    from torch_geometric.utils import to_networkx
+except:
+    pass
 from datasets.utils.r_tokenizer import parse, tokenize, tokens2idxs, chars2idxs, num_tokens, num_chars
 from datasets.utils.graph_attrs import node_attrs
 from datasets.functions_errors import functions_errors
-from utils.measure_performance import measure
 
 TokensType = Union[LongTensor, str, List[str]]
 GraphType = Union[Graph, geoData]
@@ -26,11 +28,30 @@ SingleType = Tuple[RepresentationType, int, int] # Sample, index of base functio
 DatasetItemType = Union[TripletType, PairType, SingleType]
 
 
+def load_cache(cache_path: Optional[str], tensor: bool):
+    if cache_path is not None:
+        if tensor:
+            return torch.load(cache_path)
+        else:
+            with open(cache_path, "rb") as f:
+                return pickle.load(f)
+    raise Exception
+
+def save_cache(obj, cache_path: str, tensor: bool):
+    if cache_path is not None:
+        makedirs(path.dirname(cache_path), exist_ok=True)
+        if tensor:
+            torch.save(obj, cache_path)
+        else:
+            with open(cache_path, "wb") as f:
+                pickle.dump(obj, f)
+
+
 class FunctionsDataset(data.Dataset):
 
     def __init__(self,
                  root_dir: str,
-                 split_file: str,
+                 split: Union[str, List[str]],
                  mode: str = "pairs",
                  format: str = "tokens",
                  split_subset: Union[int, Tuple[int, int]] = 0,
@@ -70,8 +91,11 @@ class FunctionsDataset(data.Dataset):
             tokenizing_errors[base].add(src_file)
 
         self.root_dir: str = path.join(root_dir, "")
-        with open(path.join(self.root_dir, split_file)) as f:
-            self.function_bases = list(map(lambda l: l.strip(), f.readlines()))
+        if isinstance(split, str):
+            with open(path.join(self.root_dir, split)) as f:
+                self.function_bases = list(map(lambda l: l.strip(), f.readlines()))
+        else:
+            self.function_bases = split
 
         if isinstance(split_subset, int) and split_subset > 0:
             self.function_bases = self.function_bases[:split_subset]
@@ -90,7 +114,7 @@ class FunctionsDataset(data.Dataset):
             self.labels = []
             self.src_files = []
             for base, funs in tqdm(src_files.items()):
-                self.labels.extend([self.function_bases.index(base) for i in range(len(funs))])
+                self.labels.extend(([self.function_bases.index(base)] * len(funs)))
                 self.src_files.extend(funs)
         else:
             self.src_files = src_files
@@ -228,19 +252,22 @@ class FunctionsDataset(data.Dataset):
             except:
                 pass # fallback to standard parsing
         if self.graph:
-            parsed_data = self._parse_graph(src_path)
+            parsed_data = self.parse_graph(src_path, self.directed, self.remove_self_loops, self.return_tensor)
         else:
-            parsed_data = self._tokenize(open(src_path, "r").read())
-        # cache
-        if cache_path is not None:
-            makedirs(path.dirname(cache_path), exist_ok=True)
-            torch.save(parsed_data, cache_path)
+            parsed_data = self.tokenize(src_path, not self.tokens, self.return_tensor)
         return parsed_data
 
+    @staticmethod
+    def parse_graph(src_path: str, directed: bool = False, remove_loops: bool = True,
+                     return_tensor: bool = True, cache_path: str = None) -> GraphType:
 
-    def _parse_graph(self, src_path: str) -> GraphType:
+        try:
+            return load_cache(cache_path, return_tensor)
+        except:
+            pass
         with open(src_path, 'r') as f:
             nodes = list(map(int, f.readline().strip().split(",")))
+            # nodes = [n if n < 30 else n // 10 for n in nodes]
             nodes = list(map(lambda x: node_attrs.index(x), nodes))
 
             edges = [[], []]
@@ -249,7 +276,7 @@ class FunctionsDataset(data.Dataset):
                 src, dst, tp = map(int, line.strip().split(","))
                 edges[0].append(src)
                 edges[1].append(dst)
-                if not self.directed:
+                if not directed:
                     edges[0].append(dst)
                     edges[1].append(src)
                 edge_attrs.append(tp)
@@ -259,21 +286,31 @@ class FunctionsDataset(data.Dataset):
         edges = LongTensor(edges)
         edge_attrs = FloatTensor(edge_attrs).reshape(-1, 1)
         graph = geoData(x=nodes, edge_index=edges, edge_attr=edge_attrs)
-        if self.remove_self_loops:
+        if remove_loops:
             graph.edge_index, graph.edge_attr = remove_self_loops(graph.edge_index, graph.edge_attr)
-        if not self.return_tensor:
-            return to_networkx(graph)
+        if not return_tensor:
+            graph = to_networkx(graph)
+        save_cache(graph, cache_path, return_tensor)
         return graph
 
-
-    def _tokenize(self, code: str) -> TokensType:
-        if self.tokens:
+    @staticmethod
+    def tokenize(src_path: str, chars: bool = False, return_tensor: bool = True, cache_path: str = None) -> TokensType:
+        try:
+            return load_cache(cache_path, return_tensor)
+        except:
+            pass
+        with open(src_path) as f:
+            code = f.read()
+        if not chars:
             tokens: List[str] = tokenize(code)
-            if not self.return_tensor:
+            if not return_tensor:
                 return tokens
             idx_tokens: List[int] = tokens2idxs(tokens)
             return LongTensor(idx_tokens).view(-1, 1)
         parsed_code: str = parse(code)
-        if not self.return_tensor:
+        if not return_tensor:
+            save_cache(parsed_code, cache_path, return_tensor)
             return parsed_code
-        return LongTensor(chars2idxs(parsed_code)).view(-1, 1)
+        t = LongTensor(chars2idxs(parsed_code)).view(-1, 1)
+        save_cache(t, cache_path, return_tensor)
+        return t

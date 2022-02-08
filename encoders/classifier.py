@@ -12,7 +12,7 @@ class Classifier(nn.Module):
         self.encoder = encoder
         in_features = encoder.out_dim * 4
         self.classifier = nn.Sequential(
-            # nn.Dropout(),
+            nn.Dropout(),
             nn.Linear(in_features, encoder.out_dim),
             nn.ReLU(),
             nn.Linear(encoder.out_dim, num_classes),
